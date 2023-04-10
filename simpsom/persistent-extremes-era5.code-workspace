@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "../../persistent-extremes-era5"
+		},
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"python.languageServer": "Pylance"
+	}
+}

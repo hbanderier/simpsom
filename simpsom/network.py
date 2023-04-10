@@ -36,7 +36,7 @@ class SOMNet:
         "PBC",
         "GPU",
         "CUML",
-        "nodes_list",
+        "weights",
         "start_sigma",
         "start_learning_rate",
         "epochs",
@@ -136,8 +136,11 @@ class SOMNet:
         if self.PBC:
             logger.info("Periodic Boundary Conditions active.")
 
-        self.weights = []
+        self.height = net_height
+        self.width = net_width
+
         self.data = self.xp.array(data, dtype=np.float32)
+        self.weights = self.xp.zeros((self.height * self.width, self.data.shape[1]))
 
         self.metric = metric
 
@@ -161,9 +164,6 @@ class SOMNet:
 
         self.convergence = []
 
-        self.height = net_height
-        self.width = net_width
-
         self.init = init
         if isinstance(self.init, str):
             self.init = self.init.lower()
@@ -171,7 +171,7 @@ class SOMNet:
             self.init = self.xp.array(self.init)
         self._set_weights(load_file)
 
-    def _get(self, data: np.ndarray) -> np.ndarray:
+    def _get(self, data) -> np.ndarray:
         """Moves data from GPU to CPU.
         If already on CPU, it will be left as it is.
 
@@ -204,7 +204,6 @@ class SOMNet:
         this_weight = None
 
         # When loaded from file, element 0 contains information on the network shape
-        count_weight = 3
 
         if load_file is None:
             if isinstance(self.init, str) and self.init == "pca":
@@ -213,7 +212,7 @@ class SOMNet:
                 )
                 logger.info("The weights will be initialized with PCA.")
 
-                if self.GPU:
+                if self.GPU: # necessary because cp.linalg.eig does not exist yet
                     matrix = self.data.get()
                     init_vec = self.pca(matrix, n_pca=2)
                     init_vec = self.xp.array(init_vec)
@@ -227,40 +226,18 @@ class SOMNet:
                     self.xp.min(self.data, axis=0),
                     self.xp.max(self.data, axis=0),
                 ]
+            self.weights = (
+                init_vec[0][None, :] + (init_vec[1] - init_vec[0])[None, :] *
+                self.xp.random.rand(self.height, self.width, len(init_vec[0]))
+            ).astype(np.float32)
 
         else:
             logger.info(
-                "The weights will be loaded from file.\n"
-                + "The map shape will be overwritten and no weights"
-                + "initialization will be applied."
+                "The weights will be loaded from file"
             )
             if not load_file.endswith(".npy"):
                 load_file += ".npy"
-            weights_array = np.load(load_file, allow_pickle=True)
-            self.height = int(weights_array[0][0])
-            self.width = int(weights_array[1][0])
-            self.PBC = bool(weights_array[2][0])
-
-        for x in range(self.width):
-            for y in range(self.height):
-                if weights_array is not None:
-                    this_weight = weights_array[count_weight]
-                    count_weight += 1
-
-                self.nodes_list.append(
-                    SOMNode(
-                        x,
-                        y,
-                        self.data.shape[1],
-                        self.height,
-                        self.width,
-                        self.PBC,
-                        self.polygons,
-                        self.xp,
-                        init_vec=init_vec,
-                        weights_array=this_weight,
-                    )
-                )
+            self.weights = np.load(load_file, allow_pickle=True)
 
     def pca(self, matrix: np.ndarray, n_pca: int) -> np.ndarray:
         """Get principal components to initialize network weights.
@@ -356,7 +333,10 @@ class SOMNet:
             "Map shape and weights will be saved to:\n"
             + os.path.join(self.output_path, file_name)
         )
-        np.save(os.path.join(self.output_path, file_name), np.array(weights_array))
+        np.save(
+            os.path.join(self.output_path, file_name), 
+            self._get(self.weights)
+        )
 
     def _update_sigma(self, n_iter: int) -> None:
         """Update the gaussian sigma.
