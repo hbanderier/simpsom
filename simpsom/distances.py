@@ -31,13 +31,8 @@ class Distance:
                 provided arrays
         """
 
-        x_sq = self.xp.power(x, 2).sum(axis=1, keepdims=True)
+        return self.xp.sqrt(self.xp.power(x[:, None, :] - w[None, :, :], 2).sum(axis=2))
 
-        w_sq = self.xp.power(w, 2).sum(axis=1, keepdims=True)
-
-        result = x_sq + w_sq.T - 2 * self.xp.dot(x, w.T)
-
-        return self.xp.nan_to_num(self.xp.sqrt(result))
 
     def cosine_distance(self, x: ArrayLike, w: ArrayLike) -> ArrayLike:
         """Calculate the cosine distance between two arrays.
