@@ -503,15 +503,13 @@ class SOMNet:
                     batchdata = self.data[start:end]
 
                     # Find BMUs for all points and subselect gaussian matrix.
-                    dists = self.distance.batchpairdist(
+                    dists = self.distance.pairdist(
                         batchdata, self.weights, self.metric
                     )
 
                     bmus = dists.argmin(axis=1)
 
-                    theta = (
-                        neighborhood_caller(bmus, sigma=self.sigma) * self.learning_rate
-                    )
+                    theta = neighborhood_caller(bmus, sigma=self.sigma)
 
                     denominator += self.xp.sum(theta, axis=0)[:, None]
                     numerator += self.xp.dot(theta.T, batchdata)
