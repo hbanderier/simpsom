@@ -251,6 +251,7 @@ class SOMNet:
             if not load_file.endswith(".npy"):
                 load_file += ".npy"
             self.weights = np.load(load_file, allow_pickle=True)
+            self.bmus = self.find_bmu_ix(self.data)
 
     def pca(self, matrix: np.ndarray, n_pca: int) -> np.ndarray:
         """Get principal components to initialize network weights.
@@ -514,11 +515,8 @@ class SOMNet:
                     batchdata = self.data[start:end]
 
                     # Find BMUs for all points and subselect gaussian matrix.
-                    dists = self.distance.pairdist(
-                        batchdata, self.weights, self.metric
-                    )
 
-                    bmus = dists.argmin(axis=1)
+                    bmus = self.find_bmu_ix(batchdata)
 
                     self.theta = neighborhood_caller(bmus, sigma=self.sigma)
 

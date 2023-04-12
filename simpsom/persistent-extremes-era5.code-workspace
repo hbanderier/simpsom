@@ -4,10 +4,12 @@
 			"path": "../../persistent-extremes-era5"
 		},
 		{
-			"path": "."
+			"path": ".."
 		}
 	],
 	"settings": {
-		"python.languageServer": "Pylance"
+		"python.languageServer": "Pylance",
+		"editor.fontSize": 15,
+		"python.formatting.provider": "black"
 	}
 }
