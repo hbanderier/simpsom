@@ -705,31 +705,31 @@ class SOMNet:
             indices = self.find_bmu_ix(data)
         return self._get(self.xp.asarray([self.xp.sum(indices == i) for i in range(self.width * self.height)]))
 
-    def compute_transmat(self, data: ArrayLike = None) -> ArrayLike:
+    def compute_transmat(self, data: ArrayLike = None, step: int = 1) -> ArrayLike:
         if data is None:
             indices = self.bmus
         else:
             indices = self.find_bmu_ix(data)
-        df = pd.DataFrame(indices)
-
-        # create a new column with data shifted one space
-        df["shift"] = df[0].shift(-1)
-
-        # add a count column (for group by function)
-        df["count"] = 1
-
-        # groupby and then unstack, fill the zeros
-        trans_mat = df.groupby([0, "shift"]).count().unstack().fillna(0)
-
-        # normalise by occurences and save values to get transition matrix
-        trans_mat = trans_mat.div(trans_mat.sum(axis=1), axis=0).values
-        return trans_mat
+        
+        trans_mat = np.zeros((self.width * self.height, self.width * self.height))
+        indices = np.repeat(indices, step + 1)[step:-step].reshape(
+            len(indices) - 1, step + 1)[:, [0, -1]]
+        indices, counts = np.unique(indices, return_counts=True, axis=0)
+        trans_mat[indices[:, 0], indices[:, 1]] = counts
+        trans_mat /= np.sum(trans_mat, axis=1)[:, None]
+        return np.nan_to_num(trans_mat, nan=0)
 
     def compute_residence_time(self, reduction: str = 'max', smooth_sigma: float = 0.) -> ArrayLike:
         indices = self.bmus
+        mask = np.where(self._get(self.neighborhoods.distances) <= smooth_sigma)[1]
+        try:
+            mask = mask.reshape(self.width * self.height, -1)[None, ...]
+        except ValueError:
+            smooth_sigma *= 1.05
+            mask = np.where(self._get(self.neighborhoods.distances) <= smooth_sigma)[1]
+            mask = mask.reshape(self.width * self.height, -1)[None, ...]
         df = np.any(
-            indices[:, None, None] == np.where(self._get(
-                self.neighborhoods.distances) <= smooth_sigma)[1].reshape(-1, 7)[None, ...],
+            indices[:, None, None] == mask,
             axis=2,
         )
         df = pd.DataFrame(df)
@@ -747,17 +747,17 @@ class SOMNet:
         return np.asarray(c)
 
     def smooth(
-        self, data: ArrayLike, smooth_k_nn: int | None = None
+        self, data: ArrayLike, smooth_sigma: float = 0
     ) -> ArrayLike:
         return self._get(self.xp.sum(
-            (data[None, :] * (self.neighborhoods.distances <= k_smooth_k_nn).astype(float)), axis=1
-        ) / np.sum(self.neighborhoods.distances[0, :] <= smooth_k_nn))
+            (data[None, :] * (self.neighborhoods.distances <= smooth_sigma).astype(float)), axis=1
+        ) / np.sum(self.neighborhoods.distances[0, :] <= smooth_sigma))
 
     def plot_on_map(
         self,
         data: ArrayLike,
-        smooth_k_nn: int = None,
-        show: bool = False,
+        smooth_sigma: float = 0,
+        show: bool = True,
         print_out: bool = True,
         **kwargs: Tuple[int]
     ) -> Tuple:
@@ -776,13 +776,7 @@ class SOMNet:
                 - cmap (ListedColormap), a custom cmap.
         """
 
-        if "file_name" not in kwargs.keys():
-            kwargs["file_name"] = os.path.join(
-                self.output_path, "./som_feature_{}.png".format(
-                    str(feature_ix))
-            )
-
-        data = self.smooth(data, smooth_k_nn)
+        data = self.smooth(data, smooth_sigma)
         fig, ax = plot_map(
             self.neighborhoods.coordinates,
             data,
@@ -792,7 +786,7 @@ class SOMNet:
             **kwargs
         )
 
-        if print_out:
+        if print_out and "file_name" in kwargs:
             logger.info("Feature map will be saved to:\n" +
                         kwargs["file_name"])
 

@@ -12,13 +12,16 @@ projected = net.project_onto_map(data)
 distances = net.neighborhoods.distances
 theta = net.theta
 a = np.random.randint(nx * ny)
-indices = net.find_bmu_ix(data)
-populations = np.asarray([(indices == i).sum() for i in range(nx * ny)])
-print(indices)
-print(indices.shape)
-fig, ax = sps.plots.plot_map(
-    net.neighborhoods.coordinates,
-    theta[56],
-    net.polygons,
-)
+populations = net.compute_populations()
+
+# fig, ax = net.plot_on_map(populations)
+
+residence_times = net.compute_residence_time('max', 1)
+# fig, ax = net.plot_on_map(residence_times, 1.0)
+
+trans_mat = net.compute_transmat()
+print(net.bmus.shape)
+print(trans_mat.shape)
+print(np.diag(trans_mat).shape)
+fig, ax = net.plot_on_map(np.diag(trans_mat), 1.0)
 # plt.show()
