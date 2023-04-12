@@ -43,6 +43,7 @@ class SOMNet:
         "start_learning_rate",
         "epochs",
         "tau",
+        "theta",
         "sigma",
         "learning_rate",
     )
@@ -457,9 +458,9 @@ class SOMNet:
 
                 bmu = int(self.find_bmu_ix(input_vec)[0])
 
-                theta = neighborhood_caller(bmu, sigma=self.sigma) * self.learning_rate
+                self.theta = neighborhood_caller(bmu, sigma=self.sigma) * self.learning_rate
 
-                self.weights -= theta[:, None] * (self.weights - input_vec[None, :])
+                self.weights -= self.theta[:, None] * (self.weights - input_vec[None, :])
 
                 if n_iter % self.data.shape[0] == 0 and early_stop is not None:
                     early_stopper.check_convergence(early_stopper.calc_loss(self))
@@ -509,10 +510,10 @@ class SOMNet:
 
                     bmus = dists.argmin(axis=1)
 
-                    theta = neighborhood_caller(bmus, sigma=self.sigma)
+                    self.theta = neighborhood_caller(bmus, sigma=self.sigma)
 
-                    denominator += self.xp.sum(theta, axis=0)[:, None]
-                    numerator += self.xp.dot(theta.T, batchdata)
+                    denominator += self.xp.sum(self.theta, axis=0)[:, None]
+                    numerator += self.xp.dot(self.theta.T, batchdata)
 
                 new_weights = self.xp.where(
                     denominator != 0, numerator / denominator, self.weights

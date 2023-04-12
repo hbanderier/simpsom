@@ -42,14 +42,17 @@ class Neighborhoods:
         self, dist_type: str | Sequence[str] = "grid"
     ) -> ArrayLike:
         if not isinstance(dist_type, str):
-            sub_dist_type = dist_type[1]
-            dist_type = dist_type[0]
+            self.sub_dist_type = dist_type[1]
+            self.dist_type = dist_type[0]
         elif self.polygons.lower() == 'hexagons' and dist_type == 'grid':
-            sub_dist_type = "chebyshev"
+            self.dist_type = dist_type
+            self.sub_dist_type = "chebyshev"
         elif dist_type == 'grid':
-            sub_dist_type = 'l1'
+            self.dist_type = dist_type
+            self.sub_dist_type = 'l1'
         else:
-            sub_dist_type = 'l2'
+            self.dist_type = dist_type
+            self.sub_dist_type = 'l2'
         self.coordinates = self.xp.asarray(
             [[x, y] for x in range(self.width) for y in range(self.height)]
         ).astype(np.float32)
@@ -59,34 +62,33 @@ class Neighborhoods:
             self.coordinates[oddrows, 0] += 0.5
         if dist_type == "cartesian":
             return self.cartesian_distances(
-                self.coordinates, self.coordinates, sub_dist_type
+                self.coordinates, self.coordinates
             )
         input = self.xp.arange(self.height * self.width)
-        return self.grid_distance(input, input, sub_dist_type)
+        return self.grid_distance(input, input)
 
     def cartesian_distances(
         self,
         a: ArrayLike,
         b: ArrayLike,
-        sub_dist_type: str = "L2",
     ) -> ArrayLike:
-        dx = self.xp.abs(b[:, None, 0] - a[None, :, 0])
-        dy = self.xp.abs(b[:, None, 1] - a[None, :, 1])
+        self.dx = self.xp.abs(b[:, None, 0] - a[None, :, 0])
+        self.dy = self.xp.abs(b[:, None, 1] - a[None, :, 1])
         if self.PBC:
             maxdx = self.width
             if self.polygons.lower() == "hexagons":
                 maxdy = self.height * np.sqrt(3) / 2
             else:
                 maxdy = self.height
-            maskx = dx > maxdx / 2
-            masky = dy > maxdy / 2
-            dx[maskx] = maxdx - dx[maskx]
-            dy[masky] = maxdy - dy[masky]
-        if sub_dist_type.lower() in ["l1", "manhattan"]:
-            return dx + dy
-        elif sub_dist_type.lower() in ["linf", "chebyshev"]:
-            return self.xp.amax([dx, dy], axis=0)
-        return self.xp.sqrt(dx ** 2 + dy ** 2)
+            maskx = self.dx > maxdx / 2
+            masky = self.dy > maxdy / 2
+            self.dx[maskx] = maxdx - self.dx[maskx]
+            self.dy[masky] = maxdy - self.dy[masky]
+        if self.sub_dist_type.lower() in ["l1", "manhattan"]:
+            return self.dx + self.dy
+        elif self.sub_dist_type.lower() in ["linf", "chebyshev"]:
+            return self.xp.amax([self.dx, self.dy], axis=0)
+        return self.xp.sqrt(self.dx ** 2 + self.dy ** 2)
 
     def hexagonal_grid_distance(
         self, xi: ArrayLike, yi: ArrayLike, xj: ArrayLike, yj: ArrayLike
@@ -120,7 +122,7 @@ class Neighborhoods:
         return dx, dy
 
     def grid_distance(
-        self, i: ArrayLike, j: ArrayLike, sub_dist_type: str = "chebyshev"
+        self, i: ArrayLike, j: ArrayLike
     ) -> ArrayLike:
         ndim = 0
         i, j = self.xp.asarray(i), self.xp.asarray(j)
@@ -131,19 +133,19 @@ class Neighborhoods:
         yi, xi = divmod(i, nx)
         yj, xj = divmod(j, ny)
         if self.polygons.lower() == "hexagons":
-            dx, dy = self.hexagonal_grid_distance(xi, yi, xj, yj)
-            mask = self.xp.sign(dx) == self.xp.sign(dy)
+            self.dx, self.dy = self.hexagonal_grid_distance(xi, yi, xj, yj)
+            mask = self.xp.sign(self.dx) == self.xp.sign(self.dy)
             all_dists = self.xp.where(
                 mask,
-                self.xp.abs(dx + dy),
-                self.xp.amax([self.xp.abs(dx), self.xp.abs(dy)], axis=0),
+                self.xp.abs(self.dx + self.dy),
+                self.xp.amax([self.xp.abs(self.dx), self.xp.abs(self.dy)], axis=0),
             )
         else:
-            dx, dy = self.rectangular_grid_distance(xi, yi, xj, yj)
-            if sub_dist_type.lower() in ["linf", "chebyshev"]:
-                all_dists = self.xp.amax([dx, dy], axis=0)
+            self.dx, self.dy = self.rectangular_grid_distance(xi, yi, xj, yj)
+            if self.sub_dist_type.lower() in ["linf", "chebyshev"]:
+                all_dists = self.xp.amax([self.dx, self.dy], axis=0)
             else:
-                all_dists = dx + dy
+                all_dists = self.dx + self.dy
         if ndim == 0:
             return all_dists[0, 0]
         elif ndim == 1:
@@ -160,7 +162,10 @@ class Neighborhoods:
         Returns
             (ArrayLike): neighbourhood function between the points in c and all points.
         """
-
+        if self.dist_type == 'cartesian':
+            thetax = self.xp.exp(-self.xp.power(self.dx[c], 2) / denominator)
+            thetay = self.xp.exp(-self.xp.power(self.dy[c], 2) / denominator)
+            return thetax * thetay
         return self.xp.exp(-self.xp.power(self.distances[c], 2) / denominator)
 
     def mexican_hat(self, c: ArrayLike, denominator: float) -> ArrayLike:
@@ -173,9 +178,13 @@ class Neighborhoods:
         Returns
             (ArrayLike): neighbourhood function between the points in c and all points.
         """
-        
-        p = self.xp.power(self.distances[c], 2)
-        return (1 - 2 * p / denominator) * self.xp.exp(- p / denominator)
+        if self.dist_type == 'cartesian':
+            thetax = self.xp.power(self.dx[c], 2)
+            thetay = self.xp.power(self.dy[c], 2)
+            theta = thetax + thetay
+        else:
+            theta = self.xp.power(self.distances[c], 2)
+        return (1 - 2 * theta / denominator) * self.xp.exp(- theta / denominator)
 
     def bubble(self, c: ArrayLike, threshold: float) -> ArrayLike:
         """Bubble neighborhood function.
@@ -186,8 +195,9 @@ class Neighborhoods:
         Returns
             (ArrayLike): neighbourhood function between the points in c and all points.
         """
-
-        return self.distances[c] < threshold
+        if self.dist_type == 'cartesian':
+            return (self.dx[c] < threshold).astype(np.float32) * (self.dy[c] < threshold).astype(np.float32)
+        return (self.distances[c] < threshold).astype(np.float32)
 
     def neighborhood_caller(
         self,
@@ -212,7 +222,7 @@ class Neighborhoods:
         if neigh_func == "gaussian":
             return self.gaussian(centers, denominator=d)
         elif neigh_func == "mexican_hat":
-            return self.mexican_hat(centers)
+            return self.mexican_hat(centers, denominator=d)
         elif neigh_func == "bubble":
             return self.bubble(centers, threshold=sigma)
         else:

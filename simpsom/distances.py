@@ -19,49 +19,67 @@ class Distance:
 
         self.xp = xp
 
-    def euclidean_distance(self, x: ArrayLike, w: ArrayLike) -> ArrayLike:
-        """Calculate the L2 distance between two arrays.
+    def euclidean_distance(self, a: ArrayLike, b: ArrayLike) -> ArrayLike:
+        """Calculate Euclidean distance between two arrays.
 
         Args:
-            x (array): first array.
-            w (array): second array.
+            a (array): first array.
+            b (array): second array.
 
         Returns:
-            (float): the euclidean distance between two
-                provided arrays
+            (float): the manhattan distance
+                between two provided arrays.
         """
 
-        return self.xp.sqrt(self.xp.power(x[:, None, :] - w[None, :, :], 2).sum(axis=2))
+        if self.xp.__name__ == "cupy":
+            _euclidean_distance_kernel = self.xp.ReductionKernel(
+                "T x, T w", "T y", "abs(x-w)", "a+b", "y = a", "0", "l2norm"
+            )
+
+            d = _euclidean_distance_kernel(
+                a[:, None, :],
+                b[None, :, :],
+                axis=2,
+            )
+
+        else:
+            d = self.xp.linalg.norm(
+                a[:, None, :] - b[None, :, :],
+                ord=2,
+                axis=2,
+            )
+
+        return d
 
 
-    def cosine_distance(self, x: ArrayLike, w: ArrayLike) -> ArrayLike:
+    def cosine_distance(self, a: ArrayLike, b: ArrayLike) -> ArrayLike:
         """Calculate the cosine distance between two arrays.
 
         Args:
-            x (array): first array.
-            w (array): second array.
+            a (array): first array.
+            b (array): second array.
 
         Returns:
             (float): the euclidean distance between two
                 provided arrays
         """
 
-        x_sq = self.xp.power(x, 2).sum(axis=1, keepdims=True)
+        a_sq = self.xp.power(a, 2).sum(axis=1, keepdims=True)
 
-        w_sq = self.xp.power(w, 2).sum(axis=1, keepdims=True)
+        b_sq = self.xp.power(b, 2).sum(axis=1, keepdims=True)
 
         similarity = self.xp.nan_to_num(
-            self.xp.dot(x, w.T) / self.xp.sqrt(x_sq * w_sq.T)
+            self.xp.dot(a, b.T) / self.xp.sqrt(a_sq * b_sq.T)
         )
 
         return 1 - similarity
 
-    def manhattan_distance(self, x: ArrayLike, w: ArrayLike) -> ArrayLike:
+    def manhattan_distance(self, a: ArrayLike, b: ArrayLike) -> ArrayLike:
         """Calculate Manhattan distance between two arrays.
 
         Args:
-            x (array): first array.
-            w (array): second array.
+            a (array): first array.
+            b (array): second array.
 
         Returns:
             (float): the manhattan distance
@@ -74,14 +92,14 @@ class Distance:
             )
 
             d = _manhattan_distance_kernel(
-                x[:, None, :],
-                w[None, :, :],
+                a[:, None, :],
+                b[None, :, :],
                 axis=2,
             )
 
         else:
             d = self.xp.linalg.norm(
-                x[:, None, :] - w[None, :, :],
+                a[:, None, :] - b[None, :, :],
                 ord=1,
                 axis=2,
             )
