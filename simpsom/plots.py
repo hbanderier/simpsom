@@ -13,9 +13,8 @@ from pylettes import Distinct20
 # from simpsom.polygons import Polygon
 
 
-@staticmethod
 def tile(
-    polygons_class: str,
+    polygons: str,
     coor: Tuple[float],
     color: Tuple[float],
     edgecolor: Tuple[float] = None,
@@ -23,7 +22,7 @@ def tile(
     """Set the tile shape for plotting.
 
     Args:
-        polygons_class (str): type of polygons, case-insensitive
+        polygons (str): type of polygons, case-insensitive
         coor (tuple[float, float]): positon of the tile in the plot figure.
         color (tuple[float,...]): color tuple.
         edgecolor (tuple[float,...]): border color tuple.
@@ -31,7 +30,7 @@ def tile(
     Returns:
         (matplotlib patch object): the tile to add to the plot.
     """
-    if polygons_class.lower() == "rectangle":
+    if polygons.lower() == "rectangle":
         return RegularPolygon(
             coor,
             numVertices=4,
@@ -40,7 +39,7 @@ def tile(
             facecolor=color,
             edgecolor=edgecolor,
         )
-    elif polygons_class.lower() == "hexagons":
+    elif polygons.lower() == "hexagons":
         return RegularPolygon(
             coor,
             numVertices=6,
