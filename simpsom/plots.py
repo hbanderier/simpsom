@@ -3,7 +3,7 @@ from typing import Union, Collection, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.figure import Figure
-from matplotlib.colors import ListedColormap
+from matplotlib.colors import ListedColormap, Normalize
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import RegularPolygon
 from matplotlib.ticker import MaxNLocator
@@ -57,9 +57,12 @@ def draw_polygons(
     fig: Figure,
     centers: Collection[float],
     feature: Collection[float],
-    cmap: Union[ListedColormap, None] = None,
+    cmap: ListedColormap | None = None,
+    norm: Normalize | None = None,
 ) -> plt.Axes:
     """Draw a grid based on the selected tiling, nodes positions and color the tiles according to a given feature.
+    
+    TODO : take care of color norm.
 
     Args:
         polygons_class (str): type of polygons, case-insensitive

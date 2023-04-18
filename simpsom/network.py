@@ -256,6 +256,8 @@ class SOMNet:
     def pca(self, matrix: np.ndarray, n_pca: int) -> np.ndarray:
         """Get principal components to initialize network weights.
 
+        This is a numpy-only function until cupy implements linalg.eig.
+
         Args:
             matrix (array): N-dimensional dataset.
             n_pca (int): number of components to keep.
@@ -568,8 +570,8 @@ class SOMNet:
         logger.info("Weights difference among neighboring nodes calculated.")
 
     def project_onto_map(
-        self, array: np.ndarray, file_name: str = "./som_projected.npy"
-    ) -> list:
+        self, array: ArrayLike = None, file_name: str = "./som_projected.npy"
+    ) -> ArrayLike:
         """Project the datapoints of a given array to the 2D space of the
         SOM by calculating the bmus.
 
@@ -581,11 +583,12 @@ class SOMNet:
         Returns:
             (list): bmu x,y position for each input array datapoint.
         """
-
-        if not isinstance(array, self.xp.ndarray):
+        if array is None:
+            array = self.data
+        elif not isinstance(array, self.xp.ndarray):
             array = self.xp.array(array)
 
-        bmu_list = self.neighborhoods.coordinates[self.find_bmu_ix(array)]
+        bmu_coords = self.neighborhoods.coordinates[self.find_bmu_ix(array)]
 
         if file_name is not None:
             if not file_name.endswith((".npy")):
@@ -595,9 +598,9 @@ class SOMNet:
                 + os.path.join(self.output_path, file_name)
             )
             np.save(os.path.join(self.output_path,
-                    file_name), self._get(bmu_list))
+                    file_name), self._get(bmu_coords))
 
-        return self.xp.array(bmu_list)
+        return self.xp.array(bmu_coords)
 
     def cluster(
         self,
@@ -743,6 +746,19 @@ class SOMNet:
             else:
                 raise NotImplementedError
         return np.asarray(c)
+    
+    def compute_autocorrelation(self,  data: ArrayLike = None, lag_max: int = 50) -> ArrayLike:
+        if data is None:
+            indices = self.bmus
+        else:
+            indices = self.find_bmu_ix(data)
+        series = self._get(indices[:, None]) == np.arange(self.width * self.height)[None, :]
+        autocorrs = []
+        for i in range(lag_max):
+            autocorrs.append(
+                np.corrcoef(series[i:], np.roll(series, i, axis=0)[i:], rowvar=False)
+            )
+        return np.asarray(autocorrs)
 
     def smooth(
         self, data: ArrayLike, smooth_sigma: float = 0
