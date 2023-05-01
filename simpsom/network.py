@@ -20,45 +20,15 @@ from simpsom.plots import plot_map, line_plot, scatter_on_map
 class SOMNet:
     """Kohonen SOM Network class."""
 
-    __slots__ = (
-        "output_path",
-        "cluster_algo",
-        "xp",
-        "data",
-        "metric",
-        "polygons",
-        "distance",
-        "differences",
-        "inner_dist_type",
-        "neighborhood_fun",
-        "neighborhoods",
-        "convergence",
-        "height",
-        "width",
-        "init",
-        "PBC",
-        "GPU",
-        "CUML",
-        "weights",
-        "bmus",
-        "start_sigma",
-        "start_learning_rate",
-        "epochs",
-        "tau",
-        "theta",
-        "sigma",
-        "learning_rate",
-    )
-
     def __init__(
         self,
-        net_height: int,
         net_width: int,
+        net_height: int,
         data: np.ndarray,
         load_file: str = None,
         metric: str = "euclidean",
         topology: str = "hexagonal",
-        inner_dist_type: str | Iterable[str] = "cartesian",
+        inner_dist_type: str | Iterable[str] = "grid",
         neighborhood_fun: str = "gaussian",
         init: str = "random",
         PBC: bool = False,
@@ -119,8 +89,7 @@ class SOMNet:
                         )
 
             except:
-                logger.warning(
-                    "CuPy libraries not found. Falling back to CPU.")
+                logger.warning("CuPy libraries not found. Falling back to CPU.")
                 self.GPU = False
 
         try:
@@ -143,8 +112,9 @@ class SOMNet:
         if self.PBC:
             logger.info("Periodic Boundary Conditions active.")
 
-        self.height = net_height
         self.width = net_width
+        self.height = net_height
+        self.n_nodes = self.width * self.height
 
         self.data = self.xp.array(data, dtype=np.float32)
 
@@ -158,13 +128,13 @@ class SOMNet:
             logger.info("Square topology.")
 
         self.distance = Distance(self.xp)
+
         self.inner_dist_type = inner_dist_type
 
         self.neighborhood_fun = neighborhood_fun.lower()
         if self.neighborhood_fun not in ["gaussian", "mexican_hat", "bubble"]:
             logger.error(
-                "{} neighborhood function not recognized.".format(
-                    self.neighborhood_fun)
+                "{} neighborhood function not recognized.".format(self.neighborhood_fun)
                 + "Choose among 'gaussian', 'mexican_hat' or 'bubble'."
             )
             raise ValueError
@@ -243,7 +213,7 @@ class SOMNet:
             self.weights = (
                 init_vec[0][None, :]
                 + (init_vec[1] - init_vec[0])[None, :]
-                * self.xp.random.rand(self.height * self.width, len(init_vec[0]))
+                * self.xp.random.rand(self.n_nodes, len(init_vec[0]))
             ).astype(np.float32)
 
         else:
@@ -313,8 +283,7 @@ class SOMNet:
             "Map shape and weights will be saved to:\n"
             + os.path.join(self.output_path, file_name)
         )
-        np.save(os.path.join(self.output_path, file_name),
-                self._get(self.weights))
+        np.save(os.path.join(self.output_path, file_name), self._get(self.weights))
 
     def _update_sigma(self, n_iter: int) -> None:
         """Update the gaussian sigma.
@@ -363,7 +332,6 @@ class SOMNet:
         early_stop: str = None,
         early_stop_patience: int = 3,
         early_stop_tolerance: float = 1e-4,
-        batch_size: int = -1,
     ) -> None:
         """Train the SOM.
 
@@ -386,14 +354,9 @@ class SOMNet:
                 this threshold, the early stopping counter will be activated (it needs to be set
                 appropriately depending on the used distance metric). Ignored if early stopping
                 is off (default 1e-4).
-            batch_size (int): Split the dataset in batches of this size when calculating the
-                new weights, works only when train_algo is "batch" and helps keeping down the
-                memory requirements when working with large datasets, if -1 run the whole dataset
-                at once.
         """
 
-        logger.info("The map will be trained with the " +
-                    train_algo + " algorithm.")
+        logger.info("The map will be trained with the " + train_algo + " algorithm.")
         self.start_sigma = max(self.height, self.width) / 2
         self.start_learning_rate = start_learning_rate
 
@@ -404,9 +367,6 @@ class SOMNet:
                 epochs = self.data.shape[0] * 10
             else:
                 epochs = 10
-
-        if batch_size == -1:
-            batch_size = len(self.data)
 
         self.epochs = epochs
         self.tau = self.epochs / self.xp.log(self.start_sigma)
@@ -467,15 +427,16 @@ class SOMNet:
 
                 bmu = int(self.find_bmu_ix(input_vec)[0])
 
-                self.theta = neighborhood_caller(
-                    bmu, sigma=self.sigma) * self.learning_rate
+                self.theta = (
+                    neighborhood_caller(bmu, sigma=self.sigma) * self.learning_rate
+                )
 
-                self.weights -= self.theta[:, None] * \
-                    (self.weights - input_vec[None, :])
+                self.weights -= self.theta[:, None] * (
+                    self.weights - input_vec[None, :]
+                )
 
                 if n_iter % self.data.shape[0] == 0 and early_stop is not None:
-                    early_stopper.check_convergence(
-                        early_stopper.calc_loss(self))
+                    early_stopper.check_convergence(early_stopper.calc_loss(self))
 
         elif train_algo == "batch":
             """Batch training.
@@ -501,29 +462,25 @@ class SOMNet:
 
                 if n_iter % 10 == 0:
                     logger.debug(
-                        "Training SOM... {:.2f}%".format(
-                            n_iter * 100.0 / self.epochs)
+                        "Training SOM... {:.2f}%".format(n_iter * 100.0 / self.epochs)
                     )
 
-                numerator = 0
-                denominator = 0
+                # Find BMUs for all points and subselect gaussian matrix.
 
-                for i in range(0, len(self.data), batch_size):
-                    start = i
-                    end = start + batch_size
-                    if end > len(self.data):
-                        end = len(self.data)
+                indices = self.find_bmu_ix(self.data)
 
-                    batchdata = self.data[start:end]
+                nodes = self.xp.arange(self.n_nodes)
 
-                    # Find BMUs for all points and subselect gaussian matrix.
+                h = neighborhood_caller(nodes, sigma=self.sigma)
 
-                    bmus = self.find_bmu_ix(batchdata)
+                series = indices[:, None] == nodes[None, :]
+                pop = self.xp.sum(series, axis=0)
+                sum = self.xp.asarray(
+                    [self.xp.sum(self.data[s, :], axis=0) for s in series.T]
+                )
 
-                    self.theta = neighborhood_caller(bmus, sigma=self.sigma)
-
-                    denominator += self.xp.sum(self.theta, axis=0)[:, None]
-                    numerator += self.xp.dot(self.theta.T, batchdata)
+                numerator = h @ sum
+                denominator = (h @ pop)[:, None]
 
                 new_weights = self.xp.where(
                     denominator != 0, numerator / denominator, self.weights
@@ -597,8 +554,7 @@ class SOMNet:
                 "Projected coordinates will be saved to:\n"
                 + os.path.join(self.output_path, file_name)
             )
-            np.save(os.path.join(self.output_path,
-                    file_name), self._get(bmu_coords))
+            np.save(os.path.join(self.output_path, file_name), self._get(bmu_coords))
 
         return self.xp.array(bmu_coords)
 
@@ -628,8 +584,7 @@ class SOMNet:
         """
 
         bmu_coor = (
-            self.project_onto_map(
-                coor, file_name="som_projected_" + algorithm + ".npy")
+            self.project_onto_map(coor, file_name="som_projected_" + algorithm + ".npy")
             if project
             else coor
         )
@@ -694,8 +649,7 @@ class SOMNet:
                 "Clustering results will be saved to:\n"
                 + os.path.join(self.output_path, file_name)
             )
-            np.save(os.path.join(self.output_path,
-                    file_name), self._get(clu_labs))
+            np.save(os.path.join(self.output_path, file_name), self._get(clu_labs))
 
         return clu_labs, bmu_coor
 
@@ -704,31 +658,34 @@ class SOMNet:
             indices = self.bmus
         else:
             indices = self.find_bmu_ix(data)
-        return self._get(self.xp.asarray([self.xp.sum(indices == i) for i in range(self.width * self.height)]))
+        return self._get(
+            self.xp.asarray([self.xp.sum(indices == i) for i in range(self.n_nodes)])
+        )
 
     def compute_transmat(self, data: ArrayLike = None, step: int = 1) -> ArrayLike:
         if data is None:
             indices = self.bmus
         else:
             indices = self.find_bmu_ix(data)
-        
-        trans_mat = np.zeros((self.width * self.height, self.width * self.height))
-        indices = np.repeat(indices, step + 1)[step:-step].reshape(
-            len(indices) - 1, step + 1)[:, [0, -1]]
+
+        trans_mat = np.zeros((self.n_nodes, self.n_nodes))
+        indices = np.vstack([indices[:-step], np.roll(indices, -step)[:-step]]).T
         indices, counts = np.unique(indices, return_counts=True, axis=0)
         trans_mat[indices[:, 0], indices[:, 1]] = counts
         trans_mat /= np.sum(trans_mat, axis=1)[:, None]
         return np.nan_to_num(trans_mat, nan=0)
 
-    def compute_residence_time(self, reduction: str = 'max', smooth_sigma: float = 0.) -> ArrayLike:
+    def compute_residence_time(
+        self, reduction: str = "max", smooth_sigma: float = 0.0
+    ) -> ArrayLike:
         indices = self.bmus
         mask = np.where(self._get(self.neighborhoods.distances) <= smooth_sigma)[1]
         try:
-            mask = mask.reshape(self.width * self.height, -1)[None, ...]
+            mask = mask.reshape(self.n_nodes, -1)[None, ...]
         except ValueError:
             smooth_sigma *= 1.05
             mask = np.where(self._get(self.neighborhoods.distances) <= smooth_sigma)[1]
-            mask = mask.reshape(self.width * self.height, -1)[None, ...]
+            mask = mask.reshape(self.n_nodes, -1)[None, ...]
         df = np.any(
             indices[:, None, None] == mask,
             axis=2,
@@ -737,35 +694,51 @@ class SOMNet:
         c = []
         for s in df:
             to_app = (~df[s]).cumsum()[df[s]].value_counts()
-            if reduction.lower() == 'max':
+            if reduction.lower() == "max":
                 c.append(to_app.max())
-            elif reduction.lower() in ['mean', 'average']:
+            elif reduction.lower() in ["mean", "average"]:
                 c.append(to_app.mean())
-            elif reduction.lower() == 'min':
+            elif reduction.lower() == "min":
                 c.append(to_app.min())
             else:
                 raise NotImplementedError
         return np.asarray(c)
-    
-    def compute_autocorrelation(self,  data: ArrayLike = None, lag_max: int = 50) -> ArrayLike:
+
+    def compute_autocorrelation(
+        self, data: ArrayLike = None, lag_max: int = 50
+    ) -> ArrayLike:
         if data is None:
             indices = self.bmus
         else:
             indices = self.find_bmu_ix(data)
-        series = self._get(indices[:, None]) == np.arange(self.width * self.height)[None, :]
+        series = self._get(indices[None, :]) == np.arange(self.n_nodes)[:, None]
         autocorrs = []
         for i in range(lag_max):
             autocorrs.append(
-                np.corrcoef(series[i:], np.roll(series, i, axis=0)[i:], rowvar=False)
+                np.diag(
+                    np.corrcoef(series[:, i:], np.roll(series, i, axis=1)[:, i:])[
+                        : self.n_nodes, self.n_nodes :
+                    ]
+                )
             )
         return np.asarray(autocorrs)
 
     def smooth(
-        self, data: ArrayLike, smooth_sigma: float = 0
+        self,
+        data: ArrayLike,
+        smooth_sigma: float = 0,
+        neigh_func: str = None,
     ) -> ArrayLike:
-        return self._get(self.xp.sum(
-            (data[None, :] * (self.neighborhoods.distances <= smooth_sigma).astype(float)), axis=1
-        ) / np.sum(self.neighborhoods.distances[0, :] <= smooth_sigma))
+        if np.isclose(smooth_sigma, 0.0):
+            return data
+        if neigh_func is None:
+            neigh_func = self.neighborhood_fun
+        theta = self.neighborhoods.neighborhood_caller(
+            np.arange(self.n_nodes), smooth_sigma, neigh_func=neigh_func
+        )
+        return self._get(
+            self.xp.sum((data[None, :] * theta), axis=1) / np.sum(theta, axis=1)
+        )
 
     def plot_on_map(
         self,
@@ -801,8 +774,7 @@ class SOMNet:
         )
 
         if print_out and "file_name" in kwargs:
-            logger.info("Feature map will be saved to:\n" +
-                        kwargs["file_name"])
+            logger.info("Feature map will be saved to:\n" + kwargs["file_name"])
 
         return fig, ax
 
@@ -826,8 +798,7 @@ class SOMNet:
         """
 
         if "file_name" not in kwargs.keys():
-            kwargs["file_name"] = os.path.join(
-                self.output_path, "./som_difference.png")
+            kwargs["file_name"] = os.path.join(self.output_path, "./som_difference.png")
 
         self.get_nodes_difference()
 
@@ -844,8 +815,7 @@ class SOMNet:
         )
 
         if print_out:
-            logger.info("Node difference map will be saved to:\n" +
-                        kwargs["file_name"])
+            logger.info("Node difference map will be saved to:\n" + kwargs["file_name"])
 
         return fig, ax
 
@@ -888,13 +858,11 @@ class SOMNet:
             if "ylabel" not in kwargs.keys():
                 kwargs["ylabel"] = "Score"
 
-            _, _ = line_plot(conv_values, show=show,
-                             print_out=print_out, **kwargs)
+            _, _ = line_plot(conv_values, show=show, print_out=print_out, **kwargs)
 
             if print_out:
                 logger.info(
-                    "Convergence results will be saved to:\n" +
-                    kwargs["file_name"]
+                    "Convergence results will be saved to:\n" + kwargs["file_name"]
                 )
 
     def plot_projected_points(
@@ -928,8 +896,7 @@ class SOMNet:
         """
 
         if "file_name" not in kwargs.keys():
-            kwargs["file_name"] = os.path.join(
-                self.output_path, "./som_projected.png")
+            kwargs["file_name"] = os.path.join(self.output_path, "./som_projected.png")
 
         bmu_coor = self.project_onto_map(coor) if project else coor
         bmu_coor = self._get(bmu_coor)
@@ -952,8 +919,7 @@ class SOMNet:
 
         if print_out:
             logger.info(
-                "Projected data scatter plot will be saved to:\n" +
-                kwargs["file_name"]
+                "Projected data scatter plot will be saved to:\n" + kwargs["file_name"]
             )
 
     def plot_clusters(
@@ -989,8 +955,7 @@ class SOMNet:
         """
 
         if "file_name" not in kwargs.keys():
-            kwargs["file_name"] = os.path.join(
-                self.output_path, "./som_clusters.png")
+            kwargs["file_name"] = os.path.join(self.output_path, "./som_clusters.png")
 
         bmu_coor = self.project_onto_map(coor) if project else coor
         bmu_coor = self._get(bmu_coor)
@@ -1011,5 +976,4 @@ class SOMNet:
         )
 
         if print_out:
-            logger.info("Clustering plot will be saved to:\n" +
-                        kwargs["file_name"])
+            logger.info("Clustering plot will be saved to:\n" + kwargs["file_name"])

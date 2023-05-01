@@ -34,6 +34,7 @@ class Neighborhoods:
         self.xp = xp
         self.width = width
         self.height = height
+        self.n_nodes = width * height
         self.PBC = PBC
         self.polygons = polygons
         self.distances = self.compute_distances(dist_type)
@@ -64,7 +65,7 @@ class Neighborhoods:
             return self.cartesian_distances(
                 self.coordinates, self.coordinates
             )
-        input = self.xp.arange(self.height * self.width)
+        input = self.xp.arange(self.n_nodes)
         return self.grid_distance(input, input)
 
     def cartesian_distances(
@@ -95,7 +96,7 @@ class Neighborhoods:
     ) -> Tuple[ArrayLike, ArrayLike]:
         dy = yj[None, :] - yi[:, None]
         dx = xj[None, :] - xi[:, None]
-        corr = xj[None, :] // 2 - xi[:, None] // 2
+        corr = yj[None, :] // 2 - yi[:, None] // 2
         if self.PBC:
             maskx = self.xp.abs(dx) > (self.width / 2)
             masky = self.xp.abs(dy) > (self.height / 2)
@@ -103,10 +104,10 @@ class Neighborhoods:
             dy[masky] = -self.xp.sign(dy[masky]) * (
                 self.height - self.xp.abs(dy[masky])
             )
-            corr[maskx] = -self.xp.sign(corr[maskx]) * (
-                self.width // 2 - self.xp.abs(corr[maskx])
+            corr[masky] = -self.xp.sign(corr[masky]) * (
+                self.height // 2 - self.xp.abs(corr[masky])
             )
-        dy = dy - corr
+        dx = dx - corr
         return dx, dy
 
     def rectangular_grid_distance(
@@ -130,8 +131,8 @@ class Neighborhoods:
         for input in [i, j]:
             ndim += input.ndim
         i, j = self.xp.atleast_1d(i), self.xp.atleast_1d(j)
-        yi, xi = divmod(i, nx)
-        yj, xj = divmod(j, ny)
+        xi, yi = divmod(i, ny)
+        xj, yj = divmod(j, ny)
         if self.polygons.lower() == "hexagons":
             self.dx, self.dy = self.hexagonal_grid_distance(xi, yi, xj, yj)
             mask = self.xp.sign(self.dx) == self.xp.sign(self.dy)
