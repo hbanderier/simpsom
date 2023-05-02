@@ -26,3 +26,4 @@ simpsom/*BAK
 tmp
 benchmark
 .DS_Store
+.vscode
