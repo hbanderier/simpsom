@@ -5,6 +5,8 @@ from functools import partial
 from types import ModuleType
 from typing import Union, List, Tuple
 from collections.abc import Iterable
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from numpy.typing import ArrayLike
 
 import numpy as np
@@ -746,8 +748,11 @@ class SOMNet:
         smooth_sigma: float = 0,
         show: bool = True,
         print_out: bool = True,
-        **kwargs: Tuple[int]
-    ) -> Tuple:
+        fig: Figure = None,
+        ax: Axes = None,
+        draw_cbar: bool = False,
+        **kwargs: Tuple
+    ) -> Tuple[Figure, Axes]:
         """Wrapper function to plot a trained 2D SOM map
         color-coded according to a given feature.
 
@@ -770,6 +775,9 @@ class SOMNet:
             self.polygons,
             show=show,
             print_out=print_out,
+            fig=fig,
+            ax=ax,
+            draw_cbar=draw_cbar,
             **kwargs
         )
 
@@ -779,8 +787,13 @@ class SOMNet:
         return fig, ax
 
     def plot_map_by_difference(
-        self, show: bool = False, print_out: bool = True, **kwargs: Tuple[int]
-    ) -> Tuple:
+        self, 
+        show: bool = False, 
+        print_out: bool = True,        
+        fig: Figure = None,
+        ax: Axes = None,
+        **kwargs: Tuple
+    ) -> Tuple[Figure, Axes]:
         """Wrapper function to plot a trained 2D SOM map
         color-coded according neighbours weights difference.
         It will automatically calculate the difference values
@@ -810,7 +823,9 @@ class SOMNet:
             self.differences,
             self.polygons,
             show=show,
-            print_out=print_out,
+            print_out=print_out,            
+            fig=fig,
+            ax=ax,
             **kwargs
         )
 
@@ -820,7 +835,10 @@ class SOMNet:
         return fig, ax
 
     def plot_convergence(
-        self, show: bool = False, print_out: bool = True, **kwargs: Tuple[int]
+        self, 
+        show: bool = False, 
+        print_out: bool = True,       
+        **kwargs: Tuple
     ) -> None:
         """Plot the the map training progress according to the
         chosen convergence criterion, when train_algo is batch.

@@ -1,8 +1,10 @@
 from typing import Union, Collection, Tuple
+from numpy.typing import ArrayLike
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.figure import Figure
+from matplotlib.axes import Axes
 from matplotlib.colors import ListedColormap, Normalize
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import RegularPolygon
@@ -57,13 +59,12 @@ def draw_polygons(
     fig: Figure,
     centers: Collection[float],
     feature: Collection[float],
+    ax: Axes = None,
     cmap: ListedColormap | None = None,
     norm: Normalize | None = None,
-) -> plt.Axes:
+) -> Axes:
     """Draw a grid based on the selected tiling, nodes positions and color the tiles according to a given feature.
     
-    TODO : take care of color norm.
-
     Args:
         polygons_class (str): type of polygons, case-insensitive
         fig (matplotlib figure object): the figure on which the grid will be plotted.
@@ -76,7 +77,8 @@ def draw_polygons(
     Returns:
         ax (matplotlib axis object): the axis on which the hexagonal grid has been plotted.
     """
-    ax = fig.add_subplot(111, aspect="equal")
+    if ax is None:
+        ax = fig.add_subplot(111, aspect="equal")
     centers = np.asarray(centers)
     xpoints = centers[:, 0]
     ypoints = centers[:, 1]
@@ -90,9 +92,13 @@ def draw_polygons(
         edgecolor = "#555555"
 
     for x, y, f in zip(xpoints, ypoints, feature):
-        patches.append(tile(polygons, (x, y), color=cmap(f), edgecolor=edgecolor))
+        if norm is not None:
+            color = cmap(norm(f))
+        else:
+            color = cmap(f)
+        patches.append(tile(polygons, (x, y), color=color, edgecolor=edgecolor))
 
-    pc = PatchCollection(patches, match_original=True, cmap=cmap)
+    pc = PatchCollection(patches, match_original=True, cmap=cmap, norm=norm)
     pc.set_array(np.array(feature))
     ax.add_collection(pc)
 
@@ -109,8 +115,11 @@ def plot_map(
     show: bool = True,
     print_out: bool = False,
     file_name: str = "./som_plot.png",
-    **kwargs: Tuple[int]
-) -> Tuple[Figure, plt.Axes]:
+    fig: Figure = None,
+    ax: Axes = None,
+    draw_cbar: bool = True,
+    **kwargs: Tuple
+) -> Tuple[Figure, Axes]:
     """Plot a 2D SOM
 
     Args:
@@ -130,6 +139,7 @@ def plot_map(
             - cbar_label (str): colorbar label,
             - fontsize (int): font size of label, title 15% larger, ticks 15% smaller,
             - cmap (ListedColormap): a custom colormap.
+            - norm (Normalize): a Normalizer
 
     Returns:
         fig (figure object): the produced figure object.
@@ -145,19 +155,22 @@ def plot_map(
     if "fontsize" not in kwargs.keys():
         kwargs["fontsize"] = 12
 
-    fig = plt.figure(figsize=(kwargs["figsize"][0], kwargs["figsize"][1]))
+    if fig is None:
+        fig = plt.figure(figsize=(kwargs["figsize"][0], kwargs["figsize"][1]))
     ax = draw_polygons(
         polygons,
         fig,
         centers,
         feature,
+        ax,
         cmap=kwargs["cmap"] if "cmap" in kwargs else plt.get_cmap("viridis"),
+        norm=kwargs["norm"] if "norm" in kwargs else None,
     )
     ax.set_title(kwargs["title"], size=kwargs["fontsize"] * 1.15)
 
     divider = make_axes_locatable(ax)
 
-    if not np.isnan(feature).all():
+    if not np.isnan(feature).all() and draw_cbar:
         cax = divider.append_axes("right", size="5%", pad=0.0)
         cbar = plt.colorbar(ax.collections[0], cax=cax)
         cbar.set_label(kwargs["cbar_label"], size=kwargs["fontsize"])
