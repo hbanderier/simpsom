@@ -750,7 +750,7 @@ class SOMNet:
         print_out: bool = True,
         fig: Figure = None,
         ax: Axes = None,
-        draw_cbar: bool = False,
+        draw_cbar: bool = True,
         **kwargs: Tuple
     ) -> Tuple[Figure, Axes]:
         """Wrapper function to plot a trained 2D SOM map
