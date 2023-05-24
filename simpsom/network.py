@@ -12,6 +12,7 @@ from numpy.typing import ArrayLike
 import numpy as np
 import pandas as pd
 from loguru import logger
+from tqdm import trange
 
 from simpsom.distances import Distance
 from simpsom.early_stop import EarlyStop
@@ -404,7 +405,7 @@ class SOMNet:
 
             datapoints_ix = self._randomize_dataset(self.data, self.epochs)
 
-            for n_iter in range(self.epochs):
+            for n_iter in trange(self.epochs):
                 if early_stopper.stop_training:
                     logger.info(
                         "\rEarly stop tolerance reached at epoch {:d}, training will be stopped.".format(
@@ -449,7 +450,7 @@ class SOMNet:
             Kinouchi, M. et al. "Quick Learning for Batch-Learning Self-Organizing Map" (2002).
             """
 
-            for n_iter in range(self.epochs):
+            for n_iter in trange(self.epochs):
                 if early_stopper.stop_training:
                     logger.info(
                         "\rEarly stop tolerance reached at epoch {:d}, training will be stopped.".format(
