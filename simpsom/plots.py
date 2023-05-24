@@ -9,7 +9,6 @@ from matplotlib.colors import ListedColormap, Normalize
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import RegularPolygon
 from matplotlib.ticker import MaxNLocator
-from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pylettes import Distinct20
 
 # from simpsom.polygons import Polygon
@@ -118,6 +117,7 @@ def plot_map(
     fig: Figure = None,
     ax: Axes = None,
     draw_cbar: bool = True,
+    cbar_kwargs: dict = None,
     **kwargs: Tuple
 ) -> Tuple[Figure, Axes]:
     """Plot a 2D SOM
@@ -145,18 +145,19 @@ def plot_map(
         fig (figure object): the produced figure object.
         ax (ax object): the produced axis object.
     """
-
+    if cbar_kwargs is None:
+        cbar_kwargs = {}
     if "figsize" not in kwargs.keys():
-        kwargs["figsize"] = (5, 5)
+        kwargs["figsize"] = (5, 4)
     if "title" not in kwargs.keys():
         kwargs["title"] = "SOM"
-    if "cbar_label" not in kwargs.keys():
-        kwargs["cbar_label"] = "Feature value"
     if "fontsize" not in kwargs.keys():
         kwargs["fontsize"] = 12
+    if "cbar_label" in kwargs:
+        cbar_kwargs["label"] = kwargs["cbar_label"] # backwards compatibility baby
 
     if fig is None:
-        fig = plt.figure(figsize=(kwargs["figsize"][0], kwargs["figsize"][1]))
+        fig, ax = plt.subplots(figsize=(kwargs["figsize"][0], kwargs["figsize"][1]))
     ax = draw_polygons(
         polygons,
         fig,
@@ -168,12 +169,9 @@ def plot_map(
     )
     ax.set_title(kwargs["title"], size=kwargs["fontsize"] * 1.15)
 
-    divider = make_axes_locatable(ax)
 
-    if not np.isnan(feature).all() and draw_cbar:
-        cax = divider.append_axes("right", size="5%", pad=0.0)
-        cbar = plt.colorbar(ax.collections[0], cax=cax)
-        cbar.set_label(kwargs["cbar_label"], size=kwargs["fontsize"])
+    if not np.isnan(feature).all() and (draw_cbar or cbar_kwargs):
+        cbar = plt.colorbar(ax.collections[0], ax=ax, **cbar_kwargs)
         cbar.ax.tick_params(labelsize=kwargs["fontsize"] * 0.85)
         cbar.outline.set_visible(False)
 
