@@ -1,17 +1,25 @@
 from typing import Union, Collection, Tuple
-from numpy.typing import ArrayLike
+from nptyping import NDArray
 
-import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib as mpl
+import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
-from matplotlib.colors import ListedColormap, Normalize
+from matplotlib.colors import Colormap, ListedColormap, Normalize
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import RegularPolygon
 from matplotlib.ticker import MaxNLocator
 from pylettes import Distinct20
+from scipy.interpolate import LinearNDInterpolator
 
-# from simpsom.polygons import Polygon
+
+def degcos(x: float) -> float:
+    return np.cos(x / 180 * np.pi)
+
+
+def degsin(x: float) -> float:
+    return np.sin(x / 180 * np.pi)
 
 
 def tile(
@@ -186,6 +194,56 @@ def plot_map(
     if show == True:
         plt.show()
 
+    return fig, ax
+
+
+def add_cluster(
+    fig: Figure,
+    ax: Axes,
+    coords: NDArray,
+    clu_labs: NDArray,
+    polygons: str = 'hexagons',
+    cmap: str | Colormap = None,
+) -> Tuple[Figure, Axes]:
+    unique_labs = np.unique(clu_labs)
+    sym = np.any(unique_labs < 0)
+
+    if cmap is None:
+        cmap = 'PiYG' if sym else 'Greens'
+    if isinstance(cmap, str):
+        cmap = mpl.colormaps[cmap]
+
+    nabove = np.sum(unique_labs > 0)
+    if sym:
+        colors = np.linspace(1., 0.66, nabove)
+        colors = [1 - colors, [0.5], colors]
+    else:
+        colors = np.linspace(1., 0.33, nabove)
+        colors = [[0.5], colors]
+    colors = np.concatenate(colors)
+    colors = cmap(colors)
+    if polygons == 'rectangle':
+        dx, dy = coords[1, :] - coords[0, :]
+        gen = [(sgnx * dx / 2.2, sgny * dy / 2.2) for sgnx, sgny in product([-1, 0, 1], [-1, 0, 1])]
+    elif polygons == 'hexagons':
+        l = 0.95 / np.sqrt(3)
+        gen = [(l * degcos(theta), l * degsin(theta)) for theta in range(30, 360, 60)]
+    for coord, val in zip(coords, clu_labs):
+        newcs = [[coord[0] + cx, coord[1] + cy] for cx, cy in gen]
+        coords = np.append(coords, newcs, axis=0)
+        clu_labs = np.append(clu_labs, [val] * len(newcs))
+    minx, miny = np.amin(coords, axis=0)
+    maxx, maxy = np.amax(coords, axis=0)
+    x = np.linspace(minx - 1, maxx + 1, 101)
+    y = np.linspace(miny - 1, maxy + 1, 101)
+
+    for i, lab in enumerate(np.unique(clu_labs)):
+        interp = LinearNDInterpolator(coords, clu_labs == lab)
+        r = interp(*np.meshgrid(x, y)) 
+        if lab == 0:
+            ax.contourf(x, y, r, levels=[0.55, 1], colors='black', alpha=0.2)
+        else:
+            ax.contour(x, y, r, levels=[0.55], colors=[colors[i]], linewidths=3)
     return fig, ax
 
 
