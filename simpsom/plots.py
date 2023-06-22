@@ -10,6 +10,7 @@ from matplotlib.colors import Colormap, ListedColormap, Normalize
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import RegularPolygon
 from matplotlib.ticker import MaxNLocator
+from itertools import product
 from pylettes import Distinct20
 from scipy.interpolate import LinearNDInterpolator
 
@@ -67,7 +68,7 @@ def draw_polygons(
     centers: Collection[float],
     feature: Collection[float],
     ax: Axes = None,
-    cmap: ListedColormap | None = None,
+    cmap: ListedColormap | None | str = None,
     norm: Normalize | None = None,
 ) -> Axes:
     """Draw a grid based on the selected tiling, nodes positions and color the tiles according to a given feature.
@@ -91,7 +92,10 @@ def draw_polygons(
     ypoints = centers[:, 1]
     patches = []
 
-    cmap = plt.get_cmap("viridis") if cmap is None else cmap
+    if isinstance(cmap, str):
+        cmap = mpl.colormaps[cmap]
+    elif cmap is None:
+        cmap = plt.get_cmap("viridis")
     cmap.set_bad(color="#ffffff", alpha=1.0)
     edgecolor = None
 
@@ -109,9 +113,11 @@ def draw_polygons(
     pc.set_array(np.array(feature))
     ax.add_collection(pc)
 
-    ax.axis("off")
-    ax.autoscale_view()
-
+    dy = 1 / np.sqrt(3) if polygons == 'hexagons' else 1 / np.sqrt(2)
+    ax.set_xlim(xpoints[0] - 0.5, xpoints[-1] + 0.5)
+    ax.set_ylim(ypoints[0] - dy,  ypoints[-1] + dy)
+    ax.axis('off')
+    
     return ax
 
 
@@ -157,8 +163,6 @@ def plot_map(
         cbar_kwargs = {}
     if "figsize" not in kwargs.keys():
         kwargs["figsize"] = (5, 4)
-    if "title" not in kwargs.keys():
-        kwargs["title"] = "SOM"
     if "fontsize" not in kwargs.keys():
         kwargs["fontsize"] = 12
     if "cbar_label" in kwargs:
@@ -175,16 +179,14 @@ def plot_map(
         cmap=kwargs["cmap"] if "cmap" in kwargs else plt.get_cmap("viridis"),
         norm=kwargs["norm"] if "norm" in kwargs else None,
     )
-    ax.set_title(kwargs["title"], size=kwargs["fontsize"] * 1.15)
+    if 'title' in kwargs:
+        ax.set_title(kwargs["title"], size=kwargs["fontsize"] * 1.15)
 
 
     if not np.isnan(feature).all() and (draw_cbar or cbar_kwargs):
         cbar = plt.colorbar(ax.collections[0], ax=ax, **cbar_kwargs)
         cbar.ax.tick_params(labelsize=kwargs["fontsize"] * 0.85)
         cbar.outline.set_visible(False)
-
-    fig.tight_layout()
-    plt.sca(ax)
 
     if not file_name.endswith((".png", ".jpg", ".pdf")):
         file_name += ".png"
@@ -203,30 +205,41 @@ def add_cluster(
     coords: NDArray,
     clu_labs: NDArray,
     polygons: str = 'hexagons',
-    cmap: str | Colormap = None,
+    cmap: str | Colormap | list | NDArray = None,
 ) -> Tuple[Figure, Axes]:
     unique_labs = np.unique(clu_labs)
     sym = np.any(unique_labs < 0)
 
     if cmap is None:
-        cmap = 'PiYG' if sym else 'Greens'
+            cmap = "PiYG" if sym else "Greens"
     if isinstance(cmap, str):
         cmap = mpl.colormaps[cmap]
-
     nabove = np.sum(unique_labs > 0)
-    if sym:
-        colors = np.linspace(1., 0.66, nabove)
-        colors = [1 - colors, [0.5], colors]
+    if isinstance(cmap, list | NDArray):
+        colors = cmap
     else:
-        colors = np.linspace(1., 0.33, nabove)
-        colors = [[0.5], colors]
-    colors = np.concatenate(colors)
-    colors = cmap(colors)
+        if sym:
+            nbelow = np.sum(unique_labs < 0)
+            cab = np.linspace(1, 0.66, nabove)
+            cbe = np.linspace(0.33, 0, nbelow)
+            if 0 in unique_labs:
+                zerocol = [0.5]
+            else:
+                zerocol = []
+            colors = [*cbe, *zerocol, *cab]
+        else:
+            if 0 in unique_labs:
+                zerocol = [0.0]
+            else:
+                zerocol = []
+            colors = np.linspace(1.0, 0.33, nabove)
+            colors = [*zerocol, *colors]
+        colors = cmap(colors)
     if polygons == 'rectangle':
         dx, dy = coords[1, :] - coords[0, :]
         gen = [(sgnx * dx / 2.2, sgny * dy / 2.2) for sgnx, sgny in product([-1, 0, 1], [-1, 0, 1])]
     elif polygons == 'hexagons':
-        l = 0.95 / np.sqrt(3)
+        l = 0.85 / np.sqrt(3)
         gen = [(l * degcos(theta), l * degsin(theta)) for theta in range(30, 360, 60)]
     for coord, val in zip(coords, clu_labs):
         newcs = [[coord[0] + cx, coord[1] + cy] for cx, cy in gen]
@@ -241,9 +254,9 @@ def add_cluster(
         interp = LinearNDInterpolator(coords, clu_labs == lab)
         r = interp(*np.meshgrid(x, y)) 
         if lab == 0:
-            ax.contourf(x, y, r, levels=[0.55, 1], colors='black', alpha=0.2)
+            ax.contourf(x, y, r, levels=[0.8, 1], colors='black', alpha=0.6)
         else:
-            ax.contour(x, y, r, levels=[0.55], colors=[colors[i]], linewidths=3)
+            ax.contour(x, y, r, levels=[0.8], colors=[colors[i]], linewidths=3)
     return fig, ax
 
 

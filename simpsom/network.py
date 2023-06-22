@@ -7,7 +7,7 @@ from typing import Union, List, Tuple
 from collections.abc import Iterable
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
-from numpy.typing import ArrayLike
+from nptyping import NDArray
 
 import numpy as np
 import pandas as pd
@@ -18,7 +18,7 @@ from simpsom.distances import Distance
 from simpsom.early_stop import EarlyStop
 from simpsom.neighborhoods import Neighborhoods
 from simpsom.plots import plot_map, line_plot, scatter_on_map
-
+logger.add(sys.stderr, level="DEBUG")
 
 class SOMNet:
     """Kohonen SOM Network class."""
@@ -242,8 +242,9 @@ class SOMNet:
 
         mean_vector = np.mean(matrix.T, axis=1)
         center_mat = matrix - mean_vector
+        logger.info('cov_mat')
         cov_mat = np.cov(center_mat.T).astype(self.xp.float32)
-
+        logger.info('linalg.eig')
         return np.linalg.eig(cov_mat)[-1].T[:n_pca]
 
     def _randomize_dataset(self, data: np.ndarray, epochs: int) -> np.ndarray:
@@ -308,7 +309,7 @@ class SOMNet:
             -n_iter / self.epochs
         )
 
-    def find_bmu_ix(self, vecs: ArrayLike) -> int:
+    def find_bmu_ix(self, vecs: NDArray) -> int:
         """Find the index of the best matching unit (BMU) for a given list of vectors.
 
         Args:
@@ -463,13 +464,8 @@ class SOMNet:
                 self._update_sigma(n_iter)
                 self._update_learning_rate(n_iter)
 
-                if n_iter % 10 == 0:
-                    logger.debug(
-                        "Training SOM... {:.2f}%".format(n_iter * 100.0 / self.epochs)
-                    )
-
                 # Find BMUs for all points and subselect gaussian matrix.
-
+                logger.debug('bmu')
                 indices = self.find_bmu_ix(self.data)
 
                 nodes = self.xp.arange(self.n_nodes)
@@ -478,6 +474,7 @@ class SOMNet:
 
                 series = indices[:, None] == nodes[None, :]
                 pop = self.xp.sum(series, axis=0)
+                logger.debug('sum')
                 sum = self.xp.asarray(
                     [self.xp.sum(self.data[s, :], axis=0) for s in series.T]
                 )
@@ -530,8 +527,8 @@ class SOMNet:
         logger.info("Weights difference among neighboring nodes calculated.")
 
     def project_onto_map(
-        self, array: ArrayLike = None, file_name: str = "./som_projected.npy"
-    ) -> ArrayLike:
+        self, array: NDArray = None, file_name: str = "./som_projected.npy"
+    ) -> NDArray:
         """Project the datapoints of a given array to the 2D space of the
         SOM by calculating the bmus.
 
@@ -656,7 +653,7 @@ class SOMNet:
 
         return clu_labs, bmu_coor
 
-    def compute_populations(self, data: ArrayLike = None) -> ArrayLike:
+    def compute_populations(self, data: NDArray = None) -> NDArray:
         if data is None:
             indices = self.bmus
         else:
@@ -665,7 +662,7 @@ class SOMNet:
             self.xp.asarray([self.xp.sum(indices == i) for i in range(self.n_nodes)])
         )
 
-    def compute_transmat(self, data: ArrayLike = None, step: int = 1) -> ArrayLike:
+    def compute_transmat(self, data: NDArray = None, step: int = 1) -> NDArray:
         if data is None:
             indices = self.bmus
         else:
@@ -680,7 +677,7 @@ class SOMNet:
 
     def compute_residence_time(
         self, reduction: str = "max", smooth_sigma: float = 0.0
-    ) -> ArrayLike:
+    ) -> NDArray:
         indices = self.bmus
         mask = np.where(self._get(self.neighborhoods.distances) <= smooth_sigma)[1]
         try:
@@ -708,8 +705,8 @@ class SOMNet:
         return np.asarray(c)
 
     def compute_autocorrelation(
-        self, data: ArrayLike = None, lag_max: int = 50
-    ) -> ArrayLike:
+        self, data: NDArray = None, lag_max: int = 50
+    ) -> NDArray:
         if data is None:
             indices = self.bmus
         else:
@@ -728,10 +725,10 @@ class SOMNet:
 
     def smooth(
         self,
-        data: ArrayLike,
+        data: NDArray,
         smooth_sigma: float = 0,
         neigh_func: str = None,
-    ) -> ArrayLike:
+    ) -> NDArray:
         if np.isclose(smooth_sigma, 0.0):
             return data
         if neigh_func is None:
@@ -745,7 +742,7 @@ class SOMNet:
 
     def plot_on_map(
         self,
-        data: ArrayLike,
+        data: NDArray,
         smooth_sigma: float = 0,
         show: bool = True,
         print_out: bool = True,
@@ -758,7 +755,7 @@ class SOMNet:
         color-coded according to a given feature.
 
         Args:
-            data (ArrayLike): What to show on the map.
+            data (NDArray): What to show on the map.
             show (bool): Choose to display the plot.
             print_out (bool): Choose to save the plot to a file.
             kwargs (dict): Keyword arguments to format the plot, such as
