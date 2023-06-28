@@ -28,6 +28,8 @@ def tile(
     coor: Tuple[float],
     color: Tuple[float],
     edgecolor: Tuple[float] = None,
+    alpha: float = .1,
+    linewidth: float = 1.,
 ) -> RegularPolygon:
     """Set the tile shape for plotting.
 
@@ -48,6 +50,8 @@ def tile(
             orientation=np.radians(45),
             facecolor=color,
             edgecolor=edgecolor,
+            alpha=alpha,
+            linewidth=linewidth,
         )
     elif polygons.lower() == "hexagons":
         return RegularPolygon(
@@ -57,6 +61,8 @@ def tile(
             orientation=np.radians(0),
             facecolor=color,
             edgecolor=edgecolor,
+            alpha=alpha,
+            linewidth=linewidth,
         )
     else:
         raise NotImplementedError("Only hexagons and rectangles")
@@ -70,6 +76,9 @@ def draw_polygons(
     ax: Axes = None,
     cmap: ListedColormap | None | str = None,
     norm: Normalize | None = None,
+    edgecolors: Tuple[float] | Collection[Tuple] = None,
+    alphas: Collection[float] | float | int = None,
+    linewidths: Collection[float] | float | int = 1.,
 ) -> Axes:
     """Draw a grid based on the selected tiling, nodes positions and color the tiles according to a given feature.
     
@@ -97,17 +106,31 @@ def draw_polygons(
     elif cmap is None:
         cmap = plt.get_cmap("viridis")
     cmap.set_bad(color="#ffffff", alpha=1.0)
-    edgecolor = None
-
+    
     if np.isnan(feature).all():
-        edgecolor = "#555555"
+        edgecolors = "#555555"
+    
+    if isinstance(edgecolors, str) or (edgecolors is None) or (len(edgecolors) == 3):
+        edgecolors = [edgecolors] * len(feature)
+        
+    if alphas is None:
+        alphas = 1.
+        
+    if isinstance(alphas, int | float):
+        alphas = [alphas] * len(feature)
+        
+    if linewidths is None:
+        linewidths = 1.
+        
+    if isinstance(linewidths, int | float):
+        linewidths = [linewidths] * len(feature)
 
-    for x, y, f in zip(xpoints, ypoints, feature):
+    for x, y, f, ec, alpha, linewidth in zip(xpoints, ypoints, feature, edgecolors, alphas, linewidths):
         if norm is not None:
             color = cmap(norm(f))
         else:
             color = cmap(f)
-        patches.append(tile(polygons, (x, y), color=color, edgecolor=edgecolor))
+        patches.append(tile(polygons, (x, y), color=color, edgecolor=ec, alpha=alpha, linewidth=linewidth))
 
     pc = PatchCollection(patches, match_original=True, cmap=cmap, norm=norm)
     pc.set_array(np.array(feature))
@@ -178,6 +201,9 @@ def plot_map(
         ax,
         cmap=kwargs["cmap"] if "cmap" in kwargs else plt.get_cmap("viridis"),
         norm=kwargs["norm"] if "norm" in kwargs else None,
+        edgecolors=kwargs["edgecolors"] if "edgecolors" in kwargs else None,
+        alphas=kwargs["alphas"] if "alphas" in kwargs else None,
+        linewidths=kwargs["linewidths"] if "linewidths" in kwargs else None,
     )
     if 'title' in kwargs:
         ax.set_title(kwargs["title"], size=kwargs["fontsize"] * 1.15)

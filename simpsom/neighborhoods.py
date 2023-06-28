@@ -209,7 +209,7 @@ class Neighborhoods:
         """Returns a neighborhood selection on any 2d topology.
 
         Args:
-            center (Tuple[ArrayLike]): index of the center point along the xx yy grid.
+            center (ArrayLike): index of the center point along the xx yy grid.
             sigma (float): standard deviation/size coefficient.
             nigh_func (str): neighborhood specific distance function name
                 (choose among 'gaussian', 'mexican_hat' or 'bubble')
