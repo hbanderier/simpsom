@@ -662,47 +662,67 @@ class SOMNet:
             self.xp.asarray([self.xp.sum(indices == i) for i in range(self.n_nodes)])
         )
 
-    def compute_transmat(self, data: NDArray = None, step: int = 1) -> NDArray:
+    def compute_transmat(self, data: NDArray = None, step: int = 1, yearbreaks: int = 92) -> NDArray:
         if data is None:
             indices = self.bmus
         else:
             indices = self.find_bmu_ix(data)
 
         trans_mat = np.zeros((self.n_nodes, self.n_nodes))
-        indices = np.vstack([indices[:-step], np.roll(indices, -step)[:-step]]).T
-        indices, counts = np.unique(indices, return_counts=True, axis=0)
-        trans_mat[indices[:, 0], indices[:, 1]] = counts
+        start_point = 0
+        for end_point in range(yearbreaks, len(indices), yearbreaks): # cleaner version with slices instead of fixed length summer if I ever need to to it for winter ? Flemme
+            real_end_point = min(end_point, len(indices) - 1)
+            theseind = np.vstack(
+                [indices[start_point:real_end_point-step], np.roll(indices[start_point:real_end_point], -step
+            )[:-step]]).T
+            theseind, counts = np.unique(theseind, return_counts=True, axis=0)
+            trans_mat[theseind[:, 0], theseind[:, 1]] += counts
+            start_point = real_end_point
         trans_mat /= np.sum(trans_mat, axis=1)[:, None]
         return np.nan_to_num(trans_mat, nan=0)
 
     def compute_residence_time(
-        self, reduction: str = "max", smooth_sigma: float = 0.0
-    ) -> NDArray:
+        self, smooth_sigma: float = 0.0, yearbreak: int = 92,
+    ) -> Tuple[NDArray, NDArray, NDArray]:
+        all_lengths = []
+        all_lenghts_flat = []
+        for j in range(self.n_nodes):
+            all_lengths.append([])
+            all_lenghts_flat.append([])
+        start_point = 0
+        distances = self._get(self.neighborhoods.distances)
         indices = self.bmus
-        mask = np.where(self._get(self.neighborhoods.distances) <= smooth_sigma)[1]
-        try:
-            mask = mask.reshape(self.n_nodes, -1)[None, ...]
-        except ValueError:
-            smooth_sigma *= 1.05
-            mask = np.where(self._get(self.neighborhoods.distances) <= smooth_sigma)[1]
-            mask = mask.reshape(self.n_nodes, -1)[None, ...]
-        df = np.any(
-            indices[:, None, None] == mask,
-            axis=2,
-        )
-        df = pd.DataFrame(df)
-        c = []
-        for s in df:
-            to_app = (~df[s]).cumsum()[df[s]].value_counts()
-            if reduction.lower() == "max":
-                c.append(to_app.max())
-            elif reduction.lower() in ["mean", "average"]:
-                c.append(to_app.mean())
-            elif reduction.lower() == "min":
-                c.append(to_app.min())
-            else:
-                raise NotImplementedError
-        return np.asarray(c)
+        for end_point in range(yearbreak, len(indices) + 1, yearbreak):
+            for j in range(self.n_nodes):
+                all_lengths[j].append([0])
+            real_end_point = min(end_point, len(indices) - 1)
+            these_indices = indices[start_point:real_end_point]
+            jumps = np.where(distances[these_indices[:-1], these_indices[1:]] != 0)[0]
+            beginnings = np.append([0], jumps + 1)
+            lengths = np.diff(np.append(beginnings, [yearbreak]))
+            if smooth_sigma != 0:
+                series_distances = (distances[these_indices[beginnings], :][:, these_indices[beginnings]] <= smooth_sigma).astype(int)
+                series_distances[np.tril_indices_from(series_distances, k=-1)] = 0
+                how_many_more = np.argmax(np.diff(series_distances, axis=1) == -1, axis=1)[:-1] - np.arange(len(beginnings) - 1)
+                for i in range(len(lengths) - 1):
+                    lengths[i] = np.sum(lengths[i:i + how_many_more[i] + 1])
+            for node, length in zip(these_indices[beginnings], lengths):
+                all_lengths[node][-1].append(length)
+                all_lenghts_flat[node].append(length)
+            start_point = real_end_point
+        trend_lengths = []
+        max_lengths = []
+        mean_lengths = []
+        for i in range(self.n_nodes):
+            mean_lengths.append(np.mean(all_lenghts_flat[i]))
+            max_each_year = np.asarray([np.amax(all_lengths[i][j]) for j in range(len(all_lengths[i]))])
+            max_lengths.append(np.amax(max_each_year))
+            mask = max_each_year != 0
+            trend_lengths.append(np.polyfit(np.arange(len(all_lengths[i]))[mask], max_each_year[mask], deg=1)[0])
+        mean_lengths = np.asarray(mean_lengths)
+        max_lengths = np.asarray(max_lengths)
+        trend_lengths = np.asarray(trend_lengths)
+        return mean_lengths, max_lengths, trend_lengths
 
     def compute_autocorrelation(
         self, data: NDArray = None, lag_max: int = 50

@@ -282,7 +282,7 @@ def add_cluster(
         if lab == 0:
             ax.contourf(x, y, r, levels=[0.8, 1], colors='black', alpha=0.6)
         else:
-            ax.contour(x, y, r, levels=[0.8], colors=[colors[i]], linewidths=3)
+            ax.contour(x, y, r, levels=[0.8], colors=[colors[i]], linewidths=4)
     return fig, ax
 
 
