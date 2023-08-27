@@ -373,7 +373,7 @@ class SOMNet:
                 epochs = 10
 
         self.epochs = epochs
-        self.tau = self.epochs / self.xp.log(self.start_sigma)
+        self.tau = 0.5 * self.epochs / self.xp.log(self.start_sigma)
 
         if early_stop not in ["mapdiff", None]:
             logger.warning(
@@ -451,7 +451,7 @@ class SOMNet:
             Kinouchi, M. et al. "Quick Learning for Batch-Learning Self-Organizing Map" (2002).
             """
 
-            for n_iter in trange(self.epochs):
+            for n_iter in range(self.epochs):
                 if early_stopper.stop_training:
                     logger.info(
                         "\rEarly stop tolerance reached at epoch {:d}, training will be stopped.".format(
@@ -493,6 +493,9 @@ class SOMNet:
                     early_stopper.check_convergence(loss)
 
                 self.weights = new_weights
+                d = np.linalg.norm(self.data[None, :, :] - self.weights[:, None, :], axis=-1)
+                loss = np.mean(np.amin(h @ d, axis=0))
+                print(f'loss: {loss:.2f}, ite: {n_iter + 1}/{epochs}, lr: {self.learning_rate:.2e}, sigma: {self.sigma:.2e}', end='\r')
 
         else:
             logger.error(

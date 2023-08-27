@@ -164,10 +164,10 @@ class Neighborhoods:
             (ArrayLike): neighbourhood function between the points in c and all points.
         """
         if self.dist_type == 'cartesian':
-            thetax = self.xp.exp(-self.xp.power(self.dx[c], 2) / denominator)
-            thetay = self.xp.exp(-self.xp.power(self.dy[c], 2) / denominator)
+            thetax = self.xp.exp(-self.xp.power(self.dx[c], 2) / denominator) / np.sqrt(denominator * np.pi)
+            thetay = self.xp.exp(-self.xp.power(self.dy[c], 2) / denominator) / np.sqrt(denominator * np.pi)
             return thetax * thetay
-        return self.xp.exp(-self.xp.power(self.distances[c], 2) / denominator)
+        return self.xp.exp(-self.xp.power(self.distances[c], 2) / denominator) / np.sqrt(denominator * np.pi)
 
     def mexican_hat(self, c: ArrayLike, denominator: float) -> ArrayLike:
         """Mexican hat neighborhood function.
