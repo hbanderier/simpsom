@@ -186,8 +186,6 @@ def plot_map(
         cbar_kwargs = {}
     if "figsize" not in kwargs.keys():
         kwargs["figsize"] = (5, 4)
-    if "fontsize" not in kwargs.keys():
-        kwargs["fontsize"] = 12
     if "cbar_label" in kwargs:
         cbar_kwargs["label"] = kwargs["cbar_label"] # backwards compatibility baby
 
@@ -208,10 +206,8 @@ def plot_map(
     if 'title' in kwargs:
         ax.set_title(kwargs["title"], size=kwargs["fontsize"] * 1.15)
 
-
     if not np.isnan(feature).all() and (draw_cbar or cbar_kwargs):
         cbar = plt.colorbar(ax.collections[0], ax=ax, **cbar_kwargs)
-        cbar.ax.tick_params(labelsize=kwargs["fontsize"] * 0.85)
         cbar.outline.set_visible(False)
 
     if not file_name.endswith((".png", ".jpg", ".pdf")):
