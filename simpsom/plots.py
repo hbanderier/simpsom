@@ -160,9 +160,6 @@ def plot_map(
     centers: Collection[np.ndarray],
     feature: Collection[np.ndarray],
     polygons: str,
-    show: bool = True,
-    print_out: bool = False,
-    file_name: str = "./som_plot.png",
     fig: Figure = None,
     ax: Axes = None,
     draw_cbar: bool = True,
@@ -221,14 +218,6 @@ def plot_map(
     if not np.isnan(feature).all() and (draw_cbar or cbar_kwargs):
         cbar = plt.colorbar(ax.collections[0], ax=ax, **cbar_kwargs)
         cbar.outline.set_visible(False)
-
-    if not file_name.endswith((".png", ".jpg", ".pdf")):
-        file_name += ".png"
-
-    if print_out == True:
-        plt.savefig(file_name, bbox_inches="tight", dpi=300)
-    if show == True:
-        plt.show()
 
     return fig, ax
 
