@@ -1,6 +1,7 @@
 import sys
 from types import ModuleType
 from numpy.typing import ArrayLike
+from sklearn.metrics import pairwise_distances
 
 import numpy as np
 from loguru import logger
@@ -41,16 +42,10 @@ class Distance:
                 b[None, :, :],
                 axis=2,
             )
+            
+            return d
 
-        else:
-            d = self.xp.linalg.norm(
-                a[:, None, :] - b[None, :, :],
-                ord=2,
-                axis=2,
-            )
-
-        return d
-
+        return pairwise_distances(a, b)
 
     def cosine_distance(self, a: ArrayLike, b: ArrayLike) -> ArrayLike:
         """Calculate the cosine distance between two arrays.
@@ -96,15 +91,10 @@ class Distance:
                 b[None, :, :],
                 axis=2,
             )
+            
+            return d
 
-        else:
-            d = self.xp.linalg.norm(
-                a[:, None, :] - b[None, :, :],
-                ord=1,
-                axis=2,
-            )
-
-        return d
+        return pairwise_distances(a, b, "manhattan")
 
     def pairdist(self, a: ArrayLike, b: ArrayLike, metric: str) -> ArrayLike:
         """Calculates distances betweens points in batches. Two array-like objects

@@ -3,7 +3,7 @@ import os
 import sys
 from functools import partial
 from types import ModuleType
-from typing import Union, List, Tuple
+from typing import Union, List, Tuple, Callable
 from collections.abc import Iterable
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
@@ -18,7 +18,7 @@ from simpsom.distances import Distance
 from simpsom.early_stop import EarlyStop
 from simpsom.neighborhoods import Neighborhoods
 from simpsom.plots import plot_map
-logger.add(sys.stderr, level="DEBUG")
+logger.add(sys.stderr, level="ERROR")
 
 class SOMNet:
     """Kohonen SOM Network class."""
@@ -72,7 +72,7 @@ class SOMNet:
 
         if not debug:
             logger.remove()
-            logger.add(sys.stderr, level="INFO")
+            logger.add(sys.stderr, level="ERROR")
 
         self.GPU = bool(GPU)
         self.CUML = bool(CUML)
@@ -225,6 +225,12 @@ class SOMNet:
                 load_file += ".npy"
             self.weights = np.load(load_file, allow_pickle=True)
             self.bmus = self.find_bmu_ix(self.data)
+            neighborhood_caller = partial(
+                self.neighborhoods.neighborhood_caller,
+                neigh_func=self.neighborhood_fun,
+            )
+            self.sigma = 0.1
+            self.compute_loss(neighborhood_caller=neighborhood_caller)
 
     def pca(self, matrix: np.ndarray, n_pca: int) -> np.ndarray:
         """Get principal components to initialize network weights.
@@ -296,7 +302,7 @@ class SOMNet:
             n_iter (int): Iteration number.
         """
 
-        self.sigma = self.start_sigma * self.xp.exp(-n_iter / self.tau)
+        self.sigma = self.start_sigma * self.xp.exp(-n_iter / self.epochs * self.speed)
 
     def _update_learning_rate(self, n_iter: int) -> None:
         """Update the learning rate.
@@ -305,9 +311,8 @@ class SOMNet:
             n_iter (int): Iteration number.
         """
 
-        self.learning_rate = self.start_learning_rate * self.xp.exp(
-            -n_iter / self.epochs
-        )
+        # self.learning_rate = self.start_learning_rate * self.xp.exp(-n_iter / self.epochs)
+        self.learning_rate = self.start_learning_rate
 
     def find_bmu_ix(self, vecs: NDArray) -> int:
         """Find the index of the best matching unit (BMU) for a given list of vectors.
@@ -327,15 +332,76 @@ class SOMNet:
         )
 
         return self.xp.argmin(dists, axis=1)
+    
+    def online_train(self, neighborhood_caller: Callable) -> None:
+        datapoints_ix = self._randomize_dataset(self.data, self.epochs)
 
+        for n_iter in trange(self.epochs):
+            self._update_sigma(n_iter)
+            self._update_learning_rate(n_iter)
+
+            datapoint_ix = datapoints_ix.pop()
+            input_vec = self.data[datapoint_ix]
+
+            bmu = int(self.find_bmu_ix(input_vec)[0])
+
+            self.theta = (
+                neighborhood_caller(bmu, sigma=self.sigma) * self.learning_rate
+            )
+
+            self.weights -= self.theta[:, None] * (
+                self.weights - input_vec[None, :]
+            )
+            
+    def compute_loss(self, h: NDArray = None, neighborhood_caller: Callable = None) -> Tuple[float]:
+        if h is None:
+            nodes = self.xp.arange(self.n_nodes)
+            h = neighborhood_caller(nodes, sigma=self.sigma)
+        d = self.distance.pairdist(
+            self.data,
+            self.weights,
+            metric=self.metric,
+        )
+        self.loss = np.mean(np.amin(h @ d.T, axis=0))
+        return self.loss
+            
+    def batch_train(self, neighborhood_caller: Callable) -> None:
+        nbatch = len(self.data) // 256
+        nodes = self.xp.arange(self.n_nodes)
+        for n_iter in range(self.epochs):
+            batches = np.array_split(self.data, nbatch)
+            batches = [batches[i] for i in np.random.choice(nbatch, nbatch, replace=False)]
+            self._update_sigma(n_iter)
+            self._update_learning_rate(n_iter)
+            
+            for i, batch in enumerate(batches):
+
+                # Find BMUs for all points and subselect gaussian matrix.
+                indices = self.find_bmu_ix(batch)
+                h = neighborhood_caller(nodes, sigma=self.sigma)
+
+                series = indices[:, None] == nodes[None, :]
+                pop = self.xp.sum(series, axis=0)
+                numerator = self.xp.asarray(
+                    [self.xp.sum(batch[s, :], axis=0) for s in series.T]
+                )
+
+                numerator = h @ numerator
+                denominator = (h @ pop)[:, None]
+
+                new_weights = self.xp.where(
+                    denominator != 0, numerator / denominator, self.weights
+                )
+
+                self.weights = (1 - self.learning_rate) * self.weights + self.learning_rate * new_weights
+            self.loss = self.compute_loss(h)
+            print(f'loss: {self.loss:.2f}, batch {i + 1}/{nbatch}, ite: {n_iter + 1}/{self.epochs}, lr: {self.learning_rate:.2e}, sigma: {self.sigma:.2e}', end='\r')
+                
     def train(
         self,
         train_algo: str = "batch",
         epochs: int = -1,
-        start_learning_rate: float = 0.01,
-        early_stop: str = None,
-        early_stop_patience: int = 3,
-        early_stop_tolerance: float = 1e-4,
+        start_learning_rate: float = 0.05,
     ) -> None:
         """Train the SOM.
 
@@ -361,7 +427,7 @@ class SOMNet:
         """
 
         logger.info("The map will be trained with the " + train_algo + " algorithm.")
-        self.start_sigma = max(self.height, self.width) / 2
+        self.start_sigma = max(self.width, self.height) / 2
         self.start_learning_rate = start_learning_rate
 
         self.data = self.xp.array(self.data)
@@ -373,25 +439,7 @@ class SOMNet:
                 epochs = 10
 
         self.epochs = epochs
-        self.tau = 0.5 * self.epochs / self.xp.log(self.start_sigma)
-
-        if early_stop not in ["mapdiff", None]:
-            logger.warning(
-                "Convergence method not recognized, early stopping will be deactivated. "
-                + 'Currently only "mapdiff" is available.'
-            )
-            early_stop = None
-
-        if early_stop is not None:
-            logger.info("Early stop active.")
-            logger.warning(
-                "Early stop is an experimental feature, "
-                + "make sure to know what you are doing!"
-            )
-
-        early_stopper = EarlyStop(
-            tolerance=early_stop_tolerance, patience=early_stop_patience
-        )
+        self.speed = 2
 
         neighborhood_caller = partial(
             self.neighborhoods.neighborhood_caller,
@@ -404,43 +452,7 @@ class SOMNet:
             and used to update the weights.
             """
 
-            datapoints_ix = self._randomize_dataset(self.data, self.epochs)
-
-            for n_iter in trange(self.epochs):
-                if early_stopper.stop_training:
-                    logger.info(
-                        "\rEarly stop tolerance reached at epoch {:d}, training will be stopped.".format(
-                            n_iter - 1
-                        )
-                    )
-                    self.convergence = early_stopper.convergence
-                    break
-
-                if n_iter % 10 == 0:
-                    logger.debug(
-                        "\rTraining SOM... {:d}%".format(
-                            int(n_iter * 100.0 / self.epochs)
-                        )
-                    )
-
-                self._update_sigma(n_iter)
-                self._update_learning_rate(n_iter)
-
-                datapoint_ix = datapoints_ix.pop()
-                input_vec = self.data[datapoint_ix]
-
-                bmu = int(self.find_bmu_ix(input_vec)[0])
-
-                self.theta = (
-                    neighborhood_caller(bmu, sigma=self.sigma) * self.learning_rate
-                )
-
-                self.weights -= self.theta[:, None] * (
-                    self.weights - input_vec[None, :]
-                )
-
-                if n_iter % self.data.shape[0] == 0 and early_stop is not None:
-                    early_stopper.check_convergence(early_stopper.calc_loss(self))
+            self.online_train(neighborhood_caller)
 
         elif train_algo == "batch":
             """Batch training.
@@ -450,67 +462,10 @@ class SOMNet:
 
             Kinouchi, M. et al. "Quick Learning for Batch-Learning Self-Organizing Map" (2002).
             """
-
-            for n_iter in range(self.epochs):
-                if early_stopper.stop_training:
-                    logger.info(
-                        "\rEarly stop tolerance reached at epoch {:d}, training will be stopped.".format(
-                            n_iter - 1
-                        )
-                    )
-                    self.convergence = early_stopper.convergence
-                    break
-
-                self._update_sigma(n_iter)
-                self._update_learning_rate(n_iter)
-
-                # Find BMUs for all points and subselect gaussian matrix.
-                logger.debug('bmu')
-                indices = self.find_bmu_ix(self.data)
-
-                nodes = self.xp.arange(self.n_nodes)
-
-                h = neighborhood_caller(nodes, sigma=self.sigma)
-
-                series = indices[:, None] == nodes[None, :]
-                pop = self.xp.sum(series, axis=0)
-                logger.debug('sum')
-                sum = self.xp.asarray(
-                    [self.xp.sum(self.data[s, :], axis=0) for s in series.T]
-                )
-
-                numerator = h @ sum
-                denominator = (h @ pop)[:, None]
-
-                new_weights = self.xp.where(
-                    denominator != 0, numerator / denominator, self.weights
-                )
-
-                if early_stop is not None:
-                    loss = self.xp.abs(
-                        self.xp.subtract(new_weights, self.weights)
-                    ).mean()
-                    early_stopper.check_convergence(loss)
-
-                self.weights = new_weights
-                d = np.linalg.norm(self.data[None, :, :] - self.weights[:, None, :], axis=-1)
-                loss = np.mean(np.amin(h @ d, axis=0))
-                print(f'loss: {loss:.2f}, ite: {n_iter + 1}/{epochs}, lr: {self.learning_rate:.2e}, sigma: {self.sigma:.2e}', end='\r')
-
-        else:
-            logger.error(
-                'Training algorithm not recognized. Choose between "online" and "batch".'
-            )
-            sys.exit(1)
+            self.batch_train(neighborhood_caller)
 
         if self.GPU:
             self.weights = self.weights.get()
-        if early_stop is not None:
-            self.convergence = (
-                [arr.get() for arr in early_stopper.convergence]
-                if self.GPU
-                else early_stopper.convergence
-            )
 
         self.bmus = self.find_bmu_ix(self.data)
 
