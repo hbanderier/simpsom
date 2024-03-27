@@ -302,7 +302,7 @@ class SOMNet:
             n_iter (int): Iteration number.
         """
 
-        self.sigma = self.start_sigma * self.xp.exp(-n_iter / self.epochs * self.speed)
+        self.sigma = self.start_sigma * self.xp.exp(n_iter / (self.epochs - 1) * self.xp.log(self.end_sigma / self.start_sigma))
 
     def _update_learning_rate(self, n_iter: int) -> None:
         """Update the learning rate.
@@ -439,7 +439,7 @@ class SOMNet:
                 epochs = 10
 
         self.epochs = epochs
-        self.speed = 2
+        self.end_sigma = .1
 
         neighborhood_caller = partial(
             self.neighborhoods.neighborhood_caller,
@@ -627,8 +627,6 @@ class SOMNet:
         self,
         data: NDArray,
         smooth_sigma: float = 0,
-        show: bool = True,
-        print_out: bool = True,
         fig: Figure = None,
         ax: Axes = None,
         draw_cbar: bool = True,
@@ -654,15 +652,10 @@ class SOMNet:
             self.neighborhoods.coordinates,
             data,
             self.polygons,
-            show=show,
-            print_out=print_out,
             fig=fig,
             ax=ax,
             draw_cbar=draw_cbar,
             **kwargs
         )
-
-        if print_out and "file_name" in kwargs:
-            logger.info("Feature map will be saved to:\n" + kwargs["file_name"])
 
         return fig, ax

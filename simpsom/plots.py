@@ -1,4 +1,4 @@
-from typing import Union, Collection, Tuple
+from typing import Union, Collection, Tuple, Literal
 from nptyping import NDArray
 
 import numpy as np
@@ -6,11 +6,12 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
-from matplotlib.colors import Colormap, ListedColormap, Normalize
+from matplotlib.colors import Colormap, ListedColormap, Normalize, BoundaryNorm
 from matplotlib.cm import ScalarMappable
 from matplotlib.collections import PatchCollection, LineCollection
 from matplotlib.patches import RegularPolygon, FancyArrowPatch
 from itertools import product
+from jetstream_hugo.plots import create_levels
 from scipy.interpolate import LinearNDInterpolator
 from simpsom.neighborhoods import Neighborhoods
 import colormaps
@@ -80,6 +81,7 @@ def draw_polygons(
     edgecolors: Tuple[float] | Collection[Tuple] = None,
     alphas: Collection[float] | float | int = None,
     linewidths: Collection[float] | float | int = 1.0,
+    discretify: Literal[0] | Literal[1] | Literal[2] = 1,
 ) -> Axes:
     """Draw a grid based on the selected tiling, nodes positions and color the tiles according to a given feature.
 
@@ -125,6 +127,13 @@ def draw_polygons(
 
     if isinstance(linewidths, int | float):
         linewidths = [linewidths] * len(feature)
+        
+    if discretify == 1:
+        levels = create_levels(feature)[0]
+        norm = BoundaryNorm(levels, cmap.N)
+    elif discretify == 2:
+        levels = create_levels(feature)[1]
+        norm = BoundaryNorm(levels, cmap.N)
 
     for x, y, f, ec, alpha, linewidth in zip(
         xpoints, ypoints, feature, edgecolors, alphas, linewidths
@@ -175,8 +184,6 @@ def plot_map(
             (e.g. node.weights, node.diff)
         polygons_class (polygons): The polygons class carrying information on the
             map topology.
-        show (bool): Choose to display the plot.
-        print_out (bool): Choose to save the plot to a file.
         file_name (str): Name of the file where the plot will be saved if
             print_out is active. Must include the output path.
         kwargs (dict): Keyword arguments to format the plot:
@@ -206,11 +213,12 @@ def plot_map(
         centers,
         feature,
         ax,
-        cmap=kwargs["cmap"] if "cmap" in kwargs else plt.get_cmap("viridis"),
-        norm=kwargs["norm"] if "norm" in kwargs else None,
-        edgecolors=kwargs["edgecolors"] if "edgecolors" in kwargs else None,
-        alphas=kwargs["alphas"] if "alphas" in kwargs else None,
-        linewidths=kwargs["linewidths"] if "linewidths" in kwargs else None,
+        cmap=kwargs.get("cmap", colormaps.matter),
+        norm=kwargs.get("norm"),
+        edgecolors=kwargs.get("edgecolors"),
+        alphas=kwargs.get("alpha"),
+        linewidths=kwargs.get("linewidths"),
+        discretify=kwargs.get("discretify", 0),
     )
     if "title" in kwargs:
         ax.set_title(kwargs["title"], size=kwargs["fontsize"] * 1.15)
@@ -226,26 +234,28 @@ def create_outer_grid(nx: int, ny: int, polygons: str = "hexagons") -> Tuple[NDA
     nei = Neighborhoods(np, nx + 8, ny + 8, polygons, PBC=False)
     othernei = Neighborhoods(np, nx, ny, polygons, PBC=True)
     coords = nei.coordinates
-    indices = np.arange(len(coords))
-    outermask = (
-        (indices // nei.height < 4)
-        | (indices // nei.height > nei.height - 5)
-        | (indices % nei.width < 4)
-        | (indices % nei.width > nei.width - 5)
-    )
     outer_grid = np.arange(nei.width * nei.height).reshape(
         nei.height, nei.width, order="F"
     )
+    outermask = np.zeros_like(outer_grid, dtype=bool)
+    outermask[:4, :] = True
+    outermask[-4:, :] = True
+    outermask[:, :4] = True
+    outermask[:, -4:] = True
+    outermask = outermask.flatten(order="F")
     inner_grid = np.arange(othernei.width * othernei.height).reshape(
         othernei.height, othernei.width, order="F"
     )
-    theslice = slice(
+    slicex = slice(
         inner_grid.shape[0] - 4, inner_grid.shape[0] - 4 + outer_grid.shape[0]
     )
-    outer_grid[:, :4] = np.tile(inner_grid[:, -4:].T, 5)[:, theslice].T
-    outer_grid[:, -4:] = np.tile(inner_grid[:, :4].T, 5)[:, theslice].T
-    outer_grid[:4, :] = np.tile(inner_grid[-4:, :], 5)[:, theslice]
-    outer_grid[-4:, :] = np.tile(inner_grid[:4, :], 5)[:, theslice]
+    slicey = slice(
+        inner_grid.shape[1] - 4, inner_grid.shape[1] - 4 + outer_grid.shape[1]
+    )
+    outer_grid[:, :4] = np.tile(inner_grid[:, -4:].T, 5)[:, slicex].T
+    outer_grid[:, -4:] = np.tile(inner_grid[:, :4].T, 5)[:, slicex].T
+    outer_grid[:4, :] = np.tile(inner_grid[-4:, :], 5)[:, slicey]
+    outer_grid[-4:, :] = np.tile(inner_grid[:4, :], 5)[:, slicey]
     outer_grid = outer_grid.flatten(order="F")
     outer_grid[~outermask] = inner_grid.flatten(order="F")
     return outer_grid, inner_grid, coords, outermask
@@ -347,10 +357,12 @@ def traj_to_segments(
 def plt_traj_hotspell(
     hotspell, bmus_da, da_T_region
 ):
+    width = bmus_da.attrs["width"]
+    height = bmus_da.attrs["height"]
     traj_da = bmus_da.loc[hotspell]
     traj = traj_da.values
     temperature_profile = da_T_region.loc[hotspell]
-    outer_grid, inner_grid, coords, outermask = create_outer_grid(6, 6)
+    outer_grid, inner_grid, coords, outermask = create_outer_grid(width, height)
     edgecolors = np.full(len(coords), "black", dtype=object)
     edgecolors[outermask] = "gray"
     alphas = np.ones(len(coords))
@@ -381,7 +393,7 @@ def plt_traj_hotspell(
         bottom=0.01,
         top=0.99,
     )
-    fig = plt.figure(figsize=(6 * (1 + 0.4), 6))
+    fig = plt.figure(figsize=(width * (1 + 0.4), height))
     ax = fig.add_subplot(gs[0])
     ax_cbar = fig.add_subplot(gs[3])
     ax_temp = fig.add_subplot(gs[2], sharey=ax_cbar)
@@ -403,7 +415,7 @@ def plt_traj_hotspell(
         populations,
         "hexagons",
         draw_cbar=False,
-        figsize=(15, 13.5),
+        figsize=(15 * width / height, 13.5),
         show=False,
         edgecolors="black",
         cmap="Greys",
