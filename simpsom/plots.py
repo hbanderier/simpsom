@@ -1,4 +1,4 @@
-from typing import Union, Collection, Tuple, Literal
+from typing import Union, Collection, Tuple, Literal, Any
 from nptyping import NDArray
 
 import numpy as np
@@ -6,15 +6,27 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
+from matplotlib.ticker import MaxNLocator
 from matplotlib.colors import Colormap, ListedColormap, Normalize, BoundaryNorm
 from matplotlib.cm import ScalarMappable
 from matplotlib.collections import PatchCollection, LineCollection
 from matplotlib.patches import RegularPolygon, FancyArrowPatch
 from itertools import product
-from jetstream_hugo.plots import create_levels
 from scipy.interpolate import LinearNDInterpolator
 from simpsom.neighborhoods import Neighborhoods
 import colormaps
+
+mpl.rcParams["font.size"] = 11
+mpl.rcParams["axes.titlesize"] = 11
+mpl.rcParams["axes.labelsize"] = 11
+mpl.rcParams["xtick.labelsize"] = 11
+mpl.rcParams["ytick.labelsize"] = 11
+mpl.rcParams["legend.fontsize"] = 11
+mpl.rcParams["figure.titlesize"] = 11
+mpl.rcParams["figure.dpi"] = 300
+mpl.rcParams["savefig.dpi"] = 300
+mpl.rcParams["savefig.bbox"] = "tight"
+mpl.rcParams["text.usetex"] = True
 
 
 def degcos(x: float) -> float:
@@ -23,6 +35,21 @@ def degcos(x: float) -> float:
 
 def degsin(x: float) -> float:
     return np.sin(x / 180 * np.pi)
+
+
+def infer_direction(to_plot: Any) -> int:
+    max_ = np.nanmax(to_plot)
+    min_ = np.nanmin(to_plot)
+    try:
+        max_ = max_.item()
+        min_ = min_.item()
+    except AttributeError:
+        pass
+    sym = np.sign(max_) == - np.sign(min_)
+    sym = sym and np.abs(np.log10(np.abs(max_)) - np.log10(np.abs(min_))) <= 2
+    if sym:
+        return 0
+    return 1 if np.abs(max_) > np.abs(min_) else -1  
 
 
 def tile(
@@ -81,7 +108,7 @@ def draw_polygons(
     edgecolors: Tuple[float] | Collection[Tuple] = None,
     alphas: Collection[float] | float | int = None,
     linewidths: Collection[float] | float | int = 1.0,
-    discretify: Literal[0] | Literal[1] | Literal[2] = 1,
+    discretify: bool = True,
 ) -> Axes:
     """Draw a grid based on the selected tiling, nodes positions and color the tiles according to a given feature.
 
@@ -128,11 +155,9 @@ def draw_polygons(
     if isinstance(linewidths, int | float):
         linewidths = [linewidths] * len(feature)
         
-    if discretify == 1:
-        levels = create_levels(feature)[0]
-        norm = BoundaryNorm(levels, cmap.N)
-    elif discretify == 2:
-        levels = create_levels(feature)[1]
+    if discretify:
+        symmetric = infer_direction(feature) == 0
+        levels = MaxNLocator(9 if symmetric else 7, symmetric=symmetric).tick_values(np.amin(feature), np.amax(feature))
         norm = BoundaryNorm(levels, cmap.N)
 
     for x, y, f, ec, alpha, linewidth in zip(
@@ -220,8 +245,6 @@ def plot_map(
         linewidths=kwargs.get("linewidths"),
         discretify=kwargs.get("discretify", 0),
     )
-    if "title" in kwargs:
-        ax.set_title(kwargs["title"], size=kwargs["fontsize"] * 1.15)
 
     if not np.isnan(feature).all() and (draw_cbar or cbar_kwargs):
         cbar = plt.colorbar(ax.collections[0], ax=ax, **cbar_kwargs)
@@ -266,8 +289,7 @@ def traj_to_segments(
     coords: NDArray,
     grid: NDArray,
     outermask: NDArray,
-    as_arcs: bool = True,
-) -> Tuple[NDArray, list] | Tuple[NDArray, list, list]:
+) -> Tuple[NDArray, list]:
     segments = []
     reps = []
     prev = coords[~outermask][traj_split[0][-1]]
@@ -295,8 +317,10 @@ def traj_to_segments(
         prev = next_.copy()
 
     segments = np.asarray(segments)
-    if not as_arcs:
-        return segments, reps
+    return segments, reps
+
+
+def segments_to_arcs(segments: NDArray) -> Tuple[NDArray, list]:
     midpoints = 0.5 * (segments[:, 0, :] + segments[:, 1, :])
     tangents = 0.5 * (segments[:, 1, :] - segments[:, 0, :])
     norm_tangents = np.linalg.norm(tangents, axis=-1)
@@ -351,17 +375,16 @@ def traj_to_segments(
                 arrowstyle="wedge,tail_width=0.1,shrink_factor=0.4",
             )
         )
-    return arcs, arrows, reps
+    return arcs, arrows
 
 
 def plt_traj_hotspell(
-    hotspell, bmus_da, da_T_region
+    hotspell, bmus_da, da_T_region = None
 ):
     width = bmus_da.attrs["width"]
     height = bmus_da.attrs["height"]
     traj_da = bmus_da.loc[hotspell]
     traj = traj_da.values
-    temperature_profile = da_T_region.loc[hotspell]
     outer_grid, inner_grid, coords, outermask = create_outer_grid(width, height)
     edgecolors = np.full(len(coords), "black", dtype=object)
     edgecolors[outermask] = "gray"
@@ -381,7 +404,8 @@ def plt_traj_hotspell(
     colors = cmap(np.linspace(0, 1, len(traj) + 1))[color_array]
     sort_like = np.argsort(sizes)[::-1]
 
-    arcs, arrows, reps = traj_to_segments(traj_split, coords, outer_grid, outermask)
+    segments, reps = traj_to_segments(traj_split, coords, outer_grid, outermask)
+    arcs, arrows = segments_to_arcs(segments)
 
     gs = plt.GridSpec(
         1,
@@ -448,6 +472,10 @@ def plt_traj_hotspell(
     ax_cbar.invert_yaxis()
     ax.set_xlim(xlims)
     ax.set_ylim(ylims)
+    if da_T_region is None:
+        return fig, ax
+    
+    temperature_profile = da_T_region.loc[hotspell]
 
     y = np.linspace(0, ax_cbar.get_ylim()[0], len(temperature_profile))
     ax_temp.spines[["top", "left"]].set_visible(False)

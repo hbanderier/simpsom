@@ -1,129 +1,80 @@
-import sys
-from types import ModuleType
-from numpy.typing import ArrayLike
-from sklearn.metrics import pairwise_distances
-
+from typing import Optional
+from nptyping import NDArray
 import numpy as np
-from loguru import logger
+from numba import njit, prange
+
+@njit
+def rolling_mean(img: NDArray, size: int) -> NDArray:
+    img = np.ascontiguousarray(img)
+    img_shape = img.shape
+
+    shape = (img.shape[0] - size + 1, img.shape[1] - size + 1, size, size)
+    strides = img.strides
+    strides = (strides[0], strides[1], strides[0], strides[1])
+    patches = np.lib.stride_tricks.as_strided(img, shape=shape, strides=strides)
+    patches = np.ascontiguousarray(patches).reshape(-1, size, size)
+
+    output_img = np.array([np.mean(roi) for roi in patches])
+    output_img_shape = (img_shape[0] - size + 1, img_shape[1] - size + 1)
+    return output_img.reshape(output_img_shape)
 
 
-class Distance:
-    """Container class for distance functions."""
+@njit
+def one_ssim(im1: NDArray, im2: NDArray, win_size: int, data_range: float) -> float:
+    K1, K2 = 0.01, 0.03
+    NP = win_size ** 2
+    cov_norm = NP / (NP - 1)
+    
+    ux = rolling_mean(im1, win_size)
+    uy = rolling_mean(im2, win_size)
 
-    def __init__(self, xp: ModuleType = None) -> None:
-        """Instantiate the Distance class.
+    # compute (weighted) variances and covariances
+    uxx = rolling_mean(im1 * im1, win_size)
+    uyy = rolling_mean(im2 * im2, win_size)
+    uxy = rolling_mean(im1 * im2, win_size)
+    vx = cov_norm * (uxx - ux * ux)
+    vy = cov_norm * (uyy - uy * uy)
+    vxy = cov_norm * (uxy - ux * uy)
 
-        Args:
-            xp (numpy or cupy): the numeric labrary to use
-                to calculate distances.
-        """
+    R = data_range
+    C1 = (K1 * R) ** 2
+    C2 = (K2 * R) ** 2
 
-        self.xp = xp
+    A1, A2, B1, B2 = (
+        2 * ux * uy + C1,
+        2 * vxy + C2,
+        ux**2 + uy**2 + C1,
+        vx + vy + C2,
+    )
+    D = B1 * B2
+    S = (A1 * A2) / D
 
-    def euclidean_distance(self, a: ArrayLike, b: ArrayLike) -> ArrayLike:
-        """Calculate Euclidean distance between two arrays.
+    # to avoid edge effects will ignore filter radius strip around edges
+    pad = (win_size - 1) // 2
 
-        Args:
-            a (array): first array.
-            b (array): second array.
+    # compute (weighted) mean of ssim. Use float64 for accuracy.
+    S = 1 - S[pad:-pad, pad:-pad].mean()
+    S = 0 if S < 0 else S
+    S = 1 if S > 1 else S
+    return S
 
-        Returns:
-            (float): the manhattan distance
-                between two provided arrays.
-        """
-
-        if self.xp.__name__ == "cupy":
-            _euclidean_distance_kernel = self.xp.ReductionKernel(
-                "T x, T w", "T y", "abs(x-w)", "a+b", "y = a", "0", "l2norm"
-            )
-
-            d = _euclidean_distance_kernel(
-                a[:, None, :],
-                b[None, :, :],
-                axis=2,
-            )
-            
-            return d
-
-        return pairwise_distances(a, b)
-
-    def cosine_distance(self, a: ArrayLike, b: ArrayLike) -> ArrayLike:
-        """Calculate the cosine distance between two arrays.
-
-        Args:
-            a (array): first array.
-            b (array): second array.
-
-        Returns:
-            (float): the euclidean distance between two
-                provided arrays
-        """
-
-        a_sq = self.xp.power(a, 2).sum(axis=1, keepdims=True)
-
-        b_sq = self.xp.power(b, 2).sum(axis=1, keepdims=True)
-
-        similarity = self.xp.nan_to_num(
-            self.xp.dot(a, b.T) / self.xp.sqrt(a_sq * b_sq.T)
-        )
-
-        return 1 - similarity
-
-    def manhattan_distance(self, a: ArrayLike, b: ArrayLike) -> ArrayLike:
-        """Calculate Manhattan distance between two arrays.
-
-        Args:
-            a (array): first array.
-            b (array): second array.
-
-        Returns:
-            (float): the manhattan distance
-                between two provided arrays.
-        """
-
-        if self.xp.__name__ == "cupy":
-            _manhattan_distance_kernel = self.xp.ReductionKernel(
-                "T x, T w", "T y", "abs(x-w)", "a+b", "y = a", "0", "l1norm"
-            )
-
-            d = _manhattan_distance_kernel(
-                a[:, None, :],
-                b[None, :, :],
-                axis=2,
-            )
-            
-            return d
-
-        return pairwise_distances(a, b, "manhattan")
-
-    def pairdist(self, a: ArrayLike, b: ArrayLike, metric: str) -> ArrayLike:
-        """Calculates distances betweens points in batches. Two array-like objects
-        must be provided, distances will be calculated between all points in the
-        first array and all those in the second array.
-
-        Args:
-            x (array): first array.
-            w (array): second array.
-            metric (string): distance metric.
-                Accepted metrics are euclidean, manhattan, and cosine (default "euclidean").
-        Returns:
-            d (array): the calculated distances.
-        """
-        a, b = self.xp.atleast_1d(a), self.xp.atleast_1d(b)
-        if a.ndim == 1:
-            a = a[None, :] # can't use atleast_2d, have to do this
-        if b.ndim == 1:
-            b = b[None, :] # can't use atleast_2d, have to do this
-        if metric == "euclidean":
-            return self.euclidean_distance(a, b)
-
-        elif metric == "cosine":
-            return self.cosine_distance(a, b)
-
-        elif metric == "manhattan":
-            return self.manhattan_distance(a, b)
-
-        logger.error(
-            "Available metrics are: " + '"euclidean", "cosine" and "manhattan"'
-        )
-        sys.exit(1)
+@njit(parallel=True)
+def pairwise_ssim(X: NDArray, Y: Optional[NDArray] = None, win_size: int = 7, data_range: float = 1.0) -> NDArray:
+    half = False
+    if Y is None:
+        Y = X
+        half = True
+    output = np.zeros((len(X), len(Y)), dtype=np.float32)
+    for i in prange(X.shape[0] - int(half)):
+        if half:
+            for j in range(i + 1, X.shape[0]):
+                im1, im2 = X[i], Y[j]
+                S = one_ssim(im1, im2, win_size, data_range)
+                output[i, j] = S
+                output[j, i] = output[i, j]
+        else:
+            for j in range(Y.shape[0]):
+                im1, im2 = X[i], Y[j]
+                S = one_ssim(im1, im2, win_size, data_range)
+                output[i, j] = S
+    return output

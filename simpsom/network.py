@@ -2,7 +2,6 @@ import multiprocessing
 import os
 import sys
 from functools import partial
-from types import ModuleType
 from typing import Union, List, Tuple, Callable
 from collections.abc import Iterable
 from matplotlib.axes import Axes
@@ -10,12 +9,11 @@ from matplotlib.figure import Figure
 from nptyping import NDArray
 
 import numpy as np
-import pandas as pd
+from scipy.stats import linregress
 from loguru import logger
 from tqdm import trange
 
-from simpsom.distances import Distance
-from simpsom.early_stop import EarlyStop
+from simpsom.distances import *
 from simpsom.neighborhoods import Neighborhoods
 from simpsom.plots import plot_map
 logger.add(sys.stderr, level="ERROR")
@@ -35,8 +33,6 @@ class SOMNet:
         neighborhood_fun: str = "gaussian",
         init: str = "random",
         PBC: bool = False,
-        GPU: bool = False,
-        CUML: bool = False,
         random_seed: int = None,
         debug: bool = False,
         output_path: str = "./",
@@ -74,42 +70,10 @@ class SOMNet:
             logger.remove()
             logger.add(sys.stderr, level="ERROR")
 
-        self.GPU = bool(GPU)
-        self.CUML = bool(CUML)
-
-        if self.GPU:
-            try:
-                import cupy
-
-                self.xp = cupy
-
-                if self.CUML:
-                    try:
-                        from cuml import cluster
-                    except:
-                        logger.warning(
-                            "CUML libraries not found. Scikit-learn will be used instead."
-                        )
-
-            except:
-                logger.warning("CuPy libraries not found. Falling back to CPU.")
-                self.GPU = False
-
-        try:
-            self.xp
-        except:
-            self.xp = np
-
-        try:
-            cluster
-        except:
-            from sklearn import cluster
-        self.cluster_algo = cluster
-
         if random_seed is not None:
             os.environ["PYTHONHASHSEED"] = str(random_seed)
             np.random.seed(random_seed)
-            self.xp.random.seed(random_seed)
+            np.random.seed(random_seed)
 
         self.PBC = bool(PBC)
         if self.PBC:
@@ -119,7 +83,7 @@ class SOMNet:
         self.height = net_height
         self.n_nodes = self.width * self.height
 
-        self.data = self.xp.array(data, dtype=np.float32)
+        self.data = np.array(data, dtype=np.float32)
 
         self.metric = metric
 
@@ -129,8 +93,6 @@ class SOMNet:
         else:
             self.polygons = "Squares"
             logger.info("Square topology.")
-
-        self.distance = Distance(self.xp)
 
         self.inner_dist_type = inner_dist_type
 
@@ -143,7 +105,7 @@ class SOMNet:
             raise ValueError
 
         self.neighborhoods = Neighborhoods(
-            self.xp,
+            np,
             self.width,
             self.height,
             self.polygons,
@@ -157,28 +119,9 @@ class SOMNet:
         if isinstance(self.init, str):
             self.init = self.init.lower()
         else:
-            self.init = self.xp.array(self.init)
+            self.init = np.array(self.init)
         self._set_weights(load_file)
-
-    def _get(self, data) -> np.ndarray:
-        """Moves data from GPU to CPU.
-        If already on CPU, it will be left as it is.
-
-        Args:
-            data (array): data to move from GPU to CPU.
-
-        Returns:
-            (array): the same data on CPU.
-        """
-
-        if self.xp.__name__ == "cupy":
-            if isinstance(data, list):
-                return [d.get() for d in data]
-            elif isinstance(data, np.ndarray):
-                return data
-            return data.get()
-
-        return data
+        
 
     def _set_weights(self, load_file: str = None) -> None:
         """Set initial map weights values, either by loading them from file or with random/PCA.
@@ -198,25 +141,19 @@ class SOMNet:
                     "Please be sure that the data have been standardized before using PCA."
                 )
                 logger.info("The weights will be initialized with PCA.")
-
-                if self.GPU:  # necessary because cp.linalg.eig does not exist yet
-                    matrix = self.data.get()
-                    init_vec = self.pca(matrix, n_pca=2)
-                    init_vec = self.xp.array(init_vec)
-                else:
-                    matrix = self.data
-                    init_vec = self.pca(matrix, n_pca=2)
+                matrix = self.data
+                init_vec = self.pca(matrix, n_pca=2)
 
             else:
                 logger.info("The weights will be initialized randomly.")
                 init_vec = [
-                    self.xp.min(self.data, axis=0),
-                    self.xp.max(self.data, axis=0),
+                    np.min(self.data, axis=0),
+                    np.max(self.data, axis=0),
                 ]
             self.weights = (
                 init_vec[0][None, :]
                 + (init_vec[1] - init_vec[0])[None, :]
-                * self.xp.random.rand(self.n_nodes, len(init_vec[0]))
+                * np.random.rand(self.n_nodes, len(init_vec[0]))
             ).astype(np.float32)
 
         else:
@@ -249,7 +186,7 @@ class SOMNet:
         mean_vector = np.mean(matrix.T, axis=1)
         center_mat = matrix - mean_vector
         logger.info('cov_mat')
-        cov_mat = np.cov(center_mat.T).astype(self.xp.float32)
+        cov_mat = np.cov(center_mat.T).astype(np.float32)
         logger.info('linalg.eig')
         return np.linalg.eig(cov_mat)[-1].T[:n_pca]
 
@@ -293,7 +230,7 @@ class SOMNet:
             "Map shape and weights will be saved to:\n"
             + os.path.join(self.output_path, file_name)
         )
-        np.save(os.path.join(self.output_path, file_name), self._get(self.weights))
+        np.save(os.path.join(self.output_path, file_name), self.weights)
 
     def _update_sigma(self, n_iter: int) -> None:
         """Update the gaussian sigma.
@@ -302,7 +239,7 @@ class SOMNet:
             n_iter (int): Iteration number.
         """
 
-        self.sigma = self.start_sigma * self.xp.exp(n_iter / (self.epochs - 1) * self.xp.log(self.end_sigma / self.start_sigma))
+        self.sigma = self.start_sigma * np.exp(n_iter / (self.epochs - 1) * np.log(self.end_sigma / self.start_sigma))
 
     def _update_learning_rate(self, n_iter: int) -> None:
         """Update the learning rate.
@@ -311,7 +248,7 @@ class SOMNet:
             n_iter (int): Iteration number.
         """
 
-        # self.learning_rate = self.start_learning_rate * self.xp.exp(-n_iter / self.epochs)
+        # self.learning_rate = self.start_learning_rate * np.exp(-n_iter / self.epochs)
         self.learning_rate = self.start_learning_rate
 
     def find_bmu_ix(self, vecs: NDArray) -> int:
@@ -331,7 +268,7 @@ class SOMNet:
             metric=self.metric,
         )
 
-        return self.xp.argmin(dists, axis=1)
+        return np.argmin(dists, axis=1)
     
     def online_train(self, neighborhood_caller: Callable) -> None:
         datapoints_ix = self._randomize_dataset(self.data, self.epochs)
@@ -355,7 +292,7 @@ class SOMNet:
             
     def compute_loss(self, h: NDArray = None, neighborhood_caller: Callable = None) -> Tuple[float]:
         if h is None:
-            nodes = self.xp.arange(self.n_nodes)
+            nodes = np.arange(self.n_nodes)
             h = neighborhood_caller(nodes, sigma=self.sigma)
         d = self.distance.pairdist(
             self.data,
@@ -367,7 +304,7 @@ class SOMNet:
             
     def batch_train(self, neighborhood_caller: Callable) -> None:
         nbatch = len(self.data) // 256
-        nodes = self.xp.arange(self.n_nodes)
+        nodes = np.arange(self.n_nodes)
         for n_iter in range(self.epochs):
             batches = np.array_split(self.data, nbatch)
             batches = [batches[i] for i in np.random.choice(nbatch, nbatch, replace=False)]
@@ -381,15 +318,15 @@ class SOMNet:
                 h = neighborhood_caller(nodes, sigma=self.sigma)
 
                 series = indices[:, None] == nodes[None, :]
-                pop = self.xp.sum(series, axis=0)
-                numerator = self.xp.asarray(
-                    [self.xp.sum(batch[s, :], axis=0) for s in series.T]
+                pop = np.sum(series, axis=0)
+                numerator = np.asarray(
+                    [np.sum(batch[s, :], axis=0) for s in series.T]
                 )
 
                 numerator = h @ numerator
                 denominator = (h @ pop)[:, None]
 
-                new_weights = self.xp.where(
+                new_weights = np.where(
                     denominator != 0, numerator / denominator, self.weights
                 )
 
@@ -430,7 +367,7 @@ class SOMNet:
         self.start_sigma = max(self.width, self.height) / 2
         self.start_learning_rate = start_learning_rate
 
-        self.data = self.xp.array(self.data)
+        self.data = np.array(self.data)
 
         if epochs == -1:
             if train_algo == "online":
@@ -464,9 +401,6 @@ class SOMNet:
             """
             self.batch_train(neighborhood_caller)
 
-        if self.GPU:
-            self.weights = self.weights.get()
-
         self.bmus = self.find_bmu_ix(self.data)
 
     def get_nodes_difference(self) -> None:
@@ -480,7 +414,7 @@ class SOMNet:
         pos_dist = self.neighborhoods.distances
 
         weights_dist[(pos_dist > 1.01) | (pos_dist == 0.0)] = np.nan
-        self.differences = self.xp.nanmean(weights_dist, axis=0)
+        self.differences = np.nanmean(weights_dist, axis=0)
 
         logger.info("Weights difference among neighboring nodes calculated.")
 
@@ -500,8 +434,8 @@ class SOMNet:
         """
         if array is None:
             array = self.data
-        elif not isinstance(array, self.xp.ndarray):
-            array = self.xp.array(array)
+        elif not isinstance(array, np.ndarray):
+            array = np.array(array)
 
         bmu_coords = self.neighborhoods.coordinates[self.find_bmu_ix(array)]
 
@@ -512,18 +446,16 @@ class SOMNet:
                 "Projected coordinates will be saved to:\n"
                 + os.path.join(self.output_path, file_name)
             )
-            np.save(os.path.join(self.output_path, file_name), self._get(bmu_coords))
+            np.save(os.path.join(self.output_path, file_name), bmu_coords)
 
-        return self.xp.array(bmu_coords)
+        return np.array(bmu_coords)
 
     def compute_populations(self, data: NDArray = None) -> NDArray:
         if data is None:
             indices = self.bmus
         else:
             indices = self.find_bmu_ix(data)
-        return self._get(
-            self.xp.asarray([self.xp.sum(indices == i) for i in range(self.n_nodes)])
-        )
+        return np.asarray([np.sum(indices == i) for i in range(self.n_nodes)])
 
     def compute_transmat(self, data: NDArray = None, step: int = 1, yearbreaks: int = 92) -> NDArray:
         if data is None:
@@ -553,7 +485,7 @@ class SOMNet:
             all_lengths.append([])
             all_lenghts_flat.append([])
         start_point = 0
-        distances = self._get(self.neighborhoods.distances)
+        distances = self.neighborhoods.distances
         indices = self.bmus
         for end_point in range(yearbreak, len(indices) + 1, yearbreak):
             for j in range(self.n_nodes):
@@ -576,16 +508,20 @@ class SOMNet:
         trend_lengths = []
         max_lengths = []
         mean_lengths = []
+        pvalues = []
         for i in range(self.n_nodes):
             mean_lengths.append(np.mean(all_lenghts_flat[i]))
             max_each_year = np.asarray([np.amax(all_lengths[i][j]) for j in range(len(all_lengths[i]))])
             max_lengths.append(np.amax(max_each_year))
             mask = max_each_year != 0
-            trend_lengths.append(np.polyfit(np.arange(len(all_lengths[i]))[mask], max_each_year[mask], deg=1)[0])
+            trend, _, _, pvalue, _ = linregress(np.arange(len(all_lengths[i]))[mask], max_each_year[mask])
+            trend_lengths.append(trend)
+            pvalues.append(pvalue)
         mean_lengths = np.asarray(mean_lengths)
         max_lengths = np.asarray(max_lengths)
         trend_lengths = np.asarray(trend_lengths)
-        return mean_lengths, max_lengths, trend_lengths
+        pvalues = np.asarray(pvalues)
+        return mean_lengths, max_lengths, trend_lengths, pvalues
 
     def compute_autocorrelation(
         self, data: NDArray = None, lag_max: int = 50
@@ -594,7 +530,7 @@ class SOMNet:
             indices = self.bmus
         else:
             indices = self.find_bmu_ix(data)
-        series = self._get(indices[None, :]) == np.arange(self.n_nodes)[:, None]
+        series = indices[None, :] == np.arange(self.n_nodes)[:, None]
         autocorrs = []
         for i in range(lag_max):
             autocorrs.append(
@@ -619,9 +555,7 @@ class SOMNet:
         theta = self.neighborhoods.neighborhood_caller(
             np.arange(self.n_nodes), smooth_sigma, neigh_func=neigh_func
         )
-        return self._get(
-            self.xp.sum((data[None, :] * theta), axis=1) / np.sum(theta, axis=1)
-        )
+        return np.sum((data[None, :] * theta), axis=1) / np.sum(theta, axis=1)
 
     def plot_on_map(
         self,
