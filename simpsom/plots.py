@@ -16,6 +16,8 @@ from scipy.interpolate import LinearNDInterpolator
 from simpsom.neighborhoods import Neighborhoods
 import colormaps
 
+TEXTWIDTH_IN = 0.0138889 * 503.61377
+
 mpl.rcParams["font.size"] = 11
 mpl.rcParams["axes.titlesize"] = 11
 mpl.rcParams["axes.labelsize"] = 11
@@ -23,10 +25,11 @@ mpl.rcParams["xtick.labelsize"] = 11
 mpl.rcParams["ytick.labelsize"] = 11
 mpl.rcParams["legend.fontsize"] = 11
 mpl.rcParams["figure.titlesize"] = 11
-mpl.rcParams["figure.dpi"] = 300
+mpl.rcParams["figure.dpi"] = 100
 mpl.rcParams["savefig.dpi"] = 300
 mpl.rcParams["savefig.bbox"] = "tight"
 mpl.rcParams["text.usetex"] = True
+mpl.rcParams["animation.ffmpeg_path"] = r"~/mambaforge/envs/env11/bin/ffmpeg"
 
 
 def degcos(x: float) -> float:
@@ -138,7 +141,8 @@ def draw_polygons(
     cmap.set_bad(color="#ffffff", alpha=1.0)
 
     if np.isnan(feature).all():
-        edgecolors = "#555555"
+        # edgecolors = "#555555"
+        discretify = False
 
     if isinstance(edgecolors, str) or (edgecolors is None) or (len(edgecolors) == 3):
         edgecolors = [edgecolors] * len(feature)
@@ -157,7 +161,7 @@ def draw_polygons(
         
     if discretify:
         symmetric = infer_direction(feature) == 0
-        levels = MaxNLocator(9 if symmetric else 7, symmetric=symmetric).tick_values(np.amin(feature), np.amax(feature))
+        levels = MaxNLocator(7 if symmetric else 5, symmetric=symmetric).tick_values(np.amin(feature), np.amax(feature))
         norm = BoundaryNorm(levels, cmap.N)
 
     for x, y, f, ec, alpha, linewidth in zip(
@@ -241,7 +245,7 @@ def plot_map(
         cmap=kwargs.get("cmap", colormaps.matter),
         norm=kwargs.get("norm"),
         edgecolors=kwargs.get("edgecolors"),
-        alphas=kwargs.get("alpha"),
+        alphas=kwargs.get("alphas"),
         linewidths=kwargs.get("linewidths"),
         discretify=kwargs.get("discretify", 0),
     )
@@ -254,8 +258,8 @@ def plot_map(
 
 
 def create_outer_grid(nx: int, ny: int, polygons: str = "hexagons") -> Tuple[NDArray]:
-    nei = Neighborhoods(np, nx + 8, ny + 8, polygons, PBC=False)
-    othernei = Neighborhoods(np, nx, ny, polygons, PBC=True)
+    nei = Neighborhoods(nx + 8, ny + 8, polygons, PBC=False)
+    othernei = Neighborhoods(nx, ny, polygons, PBC=True)
     coords = nei.coordinates
     outer_grid = np.arange(nei.width * nei.height).reshape(
         nei.height, nei.width, order="F"

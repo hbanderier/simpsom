@@ -16,6 +16,7 @@ from tqdm import trange
 from simpsom.distances import *
 from simpsom.neighborhoods import Neighborhoods
 from simpsom.plots import plot_map
+from sklearn.metrics import pairwise_distances
 logger.add(sys.stderr, level="ERROR")
 
 class SOMNet:
@@ -27,7 +28,7 @@ class SOMNet:
         net_height: int,
         data: np.ndarray,
         load_file: str = None,
-        metric: str = "euclidean",
+        metric: str = "ssim",
         topology: str = "hexagonal",
         inner_dist_type: str | Iterable[str] = "grid",
         neighborhood_fun: str = "gaussian",
@@ -65,14 +66,13 @@ class SOMNet:
         """
 
         self.output_path = output_path
-
+        self.data_range = 1.
         if not debug:
             logger.remove()
             logger.add(sys.stderr, level="ERROR")
 
         if random_seed is not None:
             os.environ["PYTHONHASHSEED"] = str(random_seed)
-            np.random.seed(random_seed)
             np.random.seed(random_seed)
 
         self.PBC = bool(PBC)
@@ -105,7 +105,6 @@ class SOMNet:
             raise ValueError
 
         self.neighborhoods = Neighborhoods(
-            np,
             self.width,
             self.height,
             self.polygons,
@@ -121,6 +120,8 @@ class SOMNet:
         else:
             self.init = np.array(self.init)
         self._set_weights(load_file)
+        if self.metric.lower() == "ssim":
+            self.data_range = data.max() - data.min()
         
 
     def _set_weights(self, load_file: str = None) -> None:
@@ -153,7 +154,7 @@ class SOMNet:
             self.weights = (
                 init_vec[0][None, :]
                 + (init_vec[1] - init_vec[0])[None, :]
-                * np.random.rand(self.n_nodes, len(init_vec[0]))
+                * np.random.rand(self.n_nodes, *init_vec[0].shape)
             ).astype(np.float32)
 
         else:
@@ -167,7 +168,6 @@ class SOMNet:
                 neigh_func=self.neighborhood_fun,
             )
             self.sigma = 0.1
-            self.compute_loss(neighborhood_caller=neighborhood_caller)
 
     def pca(self, matrix: np.ndarray, n_pca: int) -> np.ndarray:
         """Get principal components to initialize network weights.
@@ -232,24 +232,24 @@ class SOMNet:
         )
         np.save(os.path.join(self.output_path, file_name), self.weights)
 
-    def _update_sigma(self, n_iter: int) -> None:
+    def _update_sigma(self, epoch: int) -> None:
         """Update the gaussian sigma.
 
         Args:
             n_iter (int): Iteration number.
         """
 
-        self.sigma = self.start_sigma * np.exp(n_iter / (self.epochs - 1) * np.log(self.end_sigma / self.start_sigma))
+        self.sigma = self.start_sigma * np.exp(epoch / (self.epochs - 1) * np.log(self.end_sigma / self.start_sigma))
 
-    def _update_learning_rate(self, n_iter: int) -> None:
+    def _update_learning_rate(self, epoch: int) -> None:
         """Update the learning rate.
 
         Args:
             n_iter (int): Iteration number.
         """
 
-        # self.learning_rate = self.start_learning_rate * np.exp(-n_iter / self.epochs)
-        self.learning_rate = self.start_learning_rate
+        self.learning_rate = self.start_learning_rate * np.exp(-epoch / self.epochs)
+        # self.learning_rate = self.start_learning_rate
 
     def find_bmu_ix(self, vecs: NDArray) -> int:
         """Find the index of the best matching unit (BMU) for a given list of vectors.
@@ -261,21 +261,28 @@ class SOMNet:
         Returns:
             bmu (int): The best matching unit node index.
         """
-
-        dists = self.distance.pairdist(
-            vecs,
-            self.weights,
-            metric=self.metric,
-        )
-
+        if self.metric.lower() == "euclidean":
+            dists = pairwise_distances(
+                vecs.reshape(vecs.shape[0], -1),
+                self.weights.reshape(self.weights.shape[0], -1),
+                n_jobs=12,
+            )
+        elif self.metric.lower() == "ssim":
+            dists = pairwise_ssim(
+                vecs,
+                self.weights,
+                win_size=21,
+                strides=3,
+                data_range=self.data_range
+            )
         return np.argmin(dists, axis=1)
     
     def online_train(self, neighborhood_caller: Callable) -> None:
         datapoints_ix = self._randomize_dataset(self.data, self.epochs)
 
-        for n_iter in trange(self.epochs):
-            self._update_sigma(n_iter)
-            self._update_learning_rate(n_iter)
+        for epoch in trange(self.epochs):
+            self._update_sigma(epoch)
+            self._update_learning_rate(epoch)
 
             datapoint_ix = datapoints_ix.pop()
             input_vec = self.data[datapoint_ix]
@@ -290,49 +297,37 @@ class SOMNet:
                 self.weights - input_vec[None, :]
             )
             
-    def compute_loss(self, h: NDArray = None, neighborhood_caller: Callable = None) -> Tuple[float]:
-        if h is None:
-            nodes = np.arange(self.n_nodes)
-            h = neighborhood_caller(nodes, sigma=self.sigma)
-        d = self.distance.pairdist(
-            self.data,
-            self.weights,
-            metric=self.metric,
-        )
-        self.loss = np.mean(np.amin(h @ d.T, axis=0))
-        return self.loss
-            
     def batch_train(self, neighborhood_caller: Callable) -> None:
         nbatch = len(self.data) // 256
         nodes = np.arange(self.n_nodes)
-        for n_iter in range(self.epochs):
+        pre_numerator = np.zeros(self.weights.shape, dtype=np.float32)
+        numerator = pre_numerator.copy()
+        for epoch in (pbar := trange(self.epochs)):
             batches = np.array_split(self.data, nbatch)
             batches = [batches[i] for i in np.random.choice(nbatch, nbatch, replace=False)]
-            self._update_sigma(n_iter)
-            self._update_learning_rate(n_iter)
+            self._update_sigma(epoch)
+            self._update_learning_rate(epoch)
+            h = neighborhood_caller(nodes, sigma=self.sigma)
             
-            for i, batch in enumerate(batches):
-
+            for batch in batches:
                 # Find BMUs for all points and subselect gaussian matrix.
                 indices = self.find_bmu_ix(batch)
-                h = neighborhood_caller(nodes, sigma=self.sigma)
 
                 series = indices[:, None] == nodes[None, :]
-                pop = np.sum(series, axis=0)
-                numerator = np.asarray(
-                    [np.sum(batch[s, :], axis=0) for s in series.T]
-                )
-
-                numerator = h @ numerator
-                denominator = (h @ pop)[:, None]
+                pop = np.sum(series, axis=0, dtype=np.float32)
+                for i, s in enumerate(series.T):
+                    pre_numerator[i, :, :] = np.sum(batch[s], axis=0)
+                numerator = np.einsum('ij, jkl -> ikl', h, pre_numerator)
+                    
+                denominator = (h @ pop)[:, None, None]
 
                 new_weights = np.where(
                     denominator != 0, numerator / denominator, self.weights
                 )
 
                 self.weights = (1 - self.learning_rate) * self.weights + self.learning_rate * new_weights
-            self.loss = self.compute_loss(h)
-            print(f'loss: {self.loss:.2f}, batch {i + 1}/{nbatch}, ite: {n_iter + 1}/{self.epochs}, lr: {self.learning_rate:.2e}, sigma: {self.sigma:.2e}', end='\r')
+                self.weights = self.weights.astype(np.float32)
+            pbar.set_description(f'lr: {self.learning_rate:.2e}, sigma: {self.sigma:.2e}')
                 
     def train(
         self,
@@ -364,7 +359,7 @@ class SOMNet:
         """
 
         logger.info("The map will be trained with the " + train_algo + " algorithm.")
-        self.start_sigma = max(self.width, self.height) / 2
+        self.start_sigma = min(self.width, self.height) / 2
         self.start_learning_rate = start_learning_rate
 
         self.data = np.array(self.data)
@@ -373,7 +368,7 @@ class SOMNet:
             if train_algo == "online":
                 epochs = self.data.shape[0] * 10
             else:
-                epochs = 10
+                epochs = 100
 
         self.epochs = epochs
         self.end_sigma = .1
