@@ -233,6 +233,8 @@ def plot_map(
         kwargs["figsize"] = (5, 4)
     if "cbar_label" in kwargs:
         cbar_kwargs["label"] = kwargs["cbar_label"]  # backwards compatibility baby
+    if (cbar_kwargs or draw_cbar) and "shrink" not in cbar_kwargs:
+        cbar_kwargs["shrink"] = 0.8
 
     if fig is None:
         fig, ax = plt.subplots(figsize=(kwargs["figsize"][0], kwargs["figsize"][1]))

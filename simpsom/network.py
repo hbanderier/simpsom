@@ -460,7 +460,7 @@ class SOMNet:
 
         trans_mat = np.zeros((self.n_nodes, self.n_nodes))
         start_point = 0
-        for end_point in range(yearbreaks, len(indices), yearbreaks): # cleaner version with slices instead of fixed length summer if I ever need to to it for winter ? Flemme
+        for end_point in range(yearbreaks, len(indices) + 1, yearbreaks): # cleaner version with slices instead of fixed length summer if I ever need to to it for winter ? Flemme
             real_end_point = min(end_point, len(indices) - 1)
             theseind = np.vstack(
                 [indices[start_point:real_end_point-step], np.roll(indices[start_point:real_end_point], -step
@@ -472,7 +472,7 @@ class SOMNet:
         return np.nan_to_num(trans_mat, nan=0)
 
     def compute_residence_time(
-        self, smooth_sigma: float = 0.0, yearbreak: int = 92,
+        self, smooth_sigma: float = 0.0, yearbreak: int = 92, q: float = 0.95
     ) -> Tuple[NDArray, NDArray, NDArray]:
         all_lengths = []
         all_lenghts_flat = []
@@ -506,7 +506,7 @@ class SOMNet:
         pvalues = []
         for i in range(self.n_nodes):
             mean_lengths.append(np.mean(all_lenghts_flat[i]))
-            max_each_year = np.asarray([np.amax(all_lengths[i][j]) for j in range(len(all_lengths[i]))])
+            max_each_year = np.asarray([np.quantile(all_lengths[i][j], q=q) for j in range(len(all_lengths[i]))])
             max_lengths.append(np.amax(max_each_year))
             mask = max_each_year != 0
             trend, _, _, pvalue, _ = linregress(np.arange(len(all_lengths[i]))[mask], max_each_year[mask])
