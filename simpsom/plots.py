@@ -187,8 +187,8 @@ def draw_polygons(
     ax.add_collection(pc)
 
     dy = 1 / np.sqrt(3) if polygons == "hexagons" else 1 / np.sqrt(2)
-    ax.set_xlim(xpoints[0] - 0.5, xpoints[-1] + 0.5)
-    ax.set_ylim(ypoints[0] - dy, ypoints[-1] + dy)
+    ax.set_xlim(xpoints[0] - 0.5, np.amax(xpoints) + 0.5)
+    ax.set_ylim(ypoints[0] - dy, np.amax(ypoints) + dy)
     ax.axis("off")
 
     return ax
